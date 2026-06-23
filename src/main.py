@@ -29,29 +29,22 @@ def main():
         print(f"   Check VIDEO_PATH in .env file")
         return
     
-    # Get original video info
+    # Get video info
     original_fps = int(cap.get(cv2.CAP_PROP_FPS))
     original_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     original_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     
-    # Determine output size (resized or original)
+    # Determine output size
     if settings.RESIZE_VIDEO:
         output_width = settings.RESIZE_WIDTH
         output_height = settings.RESIZE_HEIGHT
-        print(f"✅ Original Video: {original_width}x{original_height}, {original_fps} FPS")
-        print(f"✅ Resizing to: {output_width}x{output_height} (for faster processing)")
+        print(f"✅ Original: {original_width}x{original_height}, {original_fps} FPS")
+        print(f"✅ Resizing to: {output_width}x{output_height}")
     else:
         output_width = original_width
         output_height = original_height
         print(f"✅ Video: {original_width}x{original_height}, {original_fps} FPS, {total_frames} frames")
-    
-    # Show polygon info if available
-    if settings.polygon_data:
-        polygon = settings.get_polygon_points(output_width, output_height)
-        if polygon is not None:
-            print(f"✅ Polygon: {len(polygon)} points")
-            print(f"   Name: {settings.polygon_data.get('name', 'Unknown')}")
     print()
     
     # Setup video writer
@@ -64,7 +57,7 @@ def main():
             original_fps,
             (output_width, output_height)
         )
-        print(f"💾 Output: {settings.OUTPUT_VIDEO} ({output_width}x{output_height})")
+        print(f"💾 Output: {settings.OUTPUT_VIDEO}")
         print()
     
     # Process video
@@ -80,25 +73,25 @@ def main():
         
         frame_count += 1
         
-        # Resize frame if enabled
+        # Resize if enabled
         if settings.RESIZE_VIDEO:
             frame = cv2.resize(frame, (output_width, output_height))
         
         # Process frame
         annotated_frame, detections = tracker.process_frame(frame)
         
-        # Save frame
+        # Save
         if settings.SAVE_OUTPUT and video_writer:
             video_writer.write(annotated_frame)
         
-        # Show progress with polygon counts
+        # Progress
         counts = tracker.get_counts()
         progress = (frame_count / total_frames * 100) if total_frames > 0 else 0
         print(f"Frame {frame_count}/{total_frames} ({progress:.1f}%) - "
               f"Inside: {counts['inside']}, Outside: {counts['outside']}, "
               f"Total: {counts['total']}", end='\r')
         
-        # Show preview
+        # Preview
         if settings.SHOW_PREVIEW:
             cv2.imshow('People Tracker', annotated_frame)
             if cv2.waitKey(1) & 0xFF in (ord('q'), 27):
@@ -106,7 +99,7 @@ def main():
     
     print("\n" + "-" * 50)
     
-    # Show statistics
+    # Statistics
     print()
     print("📊 STATISTICS")
     print("=" * 50)
@@ -117,8 +110,6 @@ def main():
         print(f"Average FPS: {stats['avg_fps']:.2f}")
         print(f"Max FPS: {stats['max_fps']:.2f}")
         print(f"Min FPS: {stats['min_fps']:.2f}")
-        if settings.RESIZE_VIDEO:
-            print(f"Processing Resolution: {output_width}x{output_height}")
     
     counts = tracker.get_counts()
     print()

@@ -1,17 +1,18 @@
 """
-Person Tracker Class - Pure tracking logic only
+Person Tracker using Ultralytics + Supervision
+Pure tracking logic with Supervision's ByteTrack
 """
 
 import time
 import numpy as np
 from ultralytics import YOLO
+import supervision as sv
 from polygon_loader import PolygonLoader
 
 
 class PersonTracker:
     """
-    Person tracker using YOLO with built-in tracking
-    Only handles detection, tracking, and counting logic
+    Person tracker using YOLO detection + Supervision ByteTrack
     """
     
     def __init__(self, settings):
@@ -31,7 +32,6 @@ class PersonTracker:
         model_path = settings.MODEL_PATH
         print(f"📦 Model: {model_path}")
         
-        # Check if model exists
         if not model_path.exists():
             print(f"⚠️  Model not found at: {model_path}")
             print("   Downloading default model...")
@@ -41,6 +41,9 @@ class PersonTracker:
         else:
             self.model = YOLO(str(model_path))
         
+        # Initialize Supervision ByteTrack (without parameters - use defaults)
+        self.tracker = sv.ByteTrack()
+        
         # Load polygon
         self.polygon_loader = None
         if settings.POLYGON_FILE:
@@ -48,7 +51,7 @@ class PersonTracker:
             if not self.polygon_loader.is_loaded():
                 self.polygon_loader = None
         
-        # Get colors (for tracking logic only)
+        # Get colors
         if self.polygon_loader:
             self.color_inside, self.color_outside = self.polygon_loader.get_colors_bgr()
             self.polygon_alpha = self.polygon_loader.alpha
@@ -61,7 +64,6 @@ class PersonTracker:
         
         # Settings
         self.conf_threshold = settings.CONF_THRESHOLD
-        self.tracker_type = settings.TRACKER_TYPE
         self.device = settings.DEVICE
         
         # Performance tracking
@@ -69,16 +71,13 @@ class PersonTracker:
         self.fps_list = []
         self.last_time = time.time()
         
-        # Track history
-        self.track_history = {}
-        
         # Counts
         self.people_inside = 0
         self.people_outside = 0
         
         print(f"✅ Tracker ready")
         print(f"   Model: {model_path.name}")
-        print(f"   Tracker: {settings.TRACKER_TYPE}")
+        print(f"   Tracker: ByteTrack (Supervision)")
         print(f"   Confidence: {settings.CONF_THRESHOLD}")
         print(f"   Device: {settings.DEVICE}")
         
@@ -99,14 +98,14 @@ class PersonTracker:
     
     def process_frame(self, frame):
         """
-        Process a single frame - returns detections and counts only
+        Process a single frame - returns detections and counts
         
         Args:
             frame: Input image
             
         Returns:
             dict: {
-                'detections': List of detection dicts,
+                'detections': sv.Detections,
                 'people_inside': int,
                 'people_outside': int,
                 'polygon_points': pixel polygon points or None,
@@ -114,7 +113,8 @@ class PersonTracker:
                 'color_inside': tuple,
                 'color_outside': tuple,
                 'polygon_alpha': float,
-                'fps': float
+                'fps': float,
+                'frame_count': int
             }
         """
         self.frame_count += 1
@@ -126,65 +126,45 @@ class PersonTracker:
         if self.polygon_loader:
             polygon = self.polygon_loader.get_pixel_points(width, height)
         
-        # Prepare tracking
-        track_kwargs = {
-            'persist': True,
-            'conf': self.conf_threshold,
-            'iou': 0.5,
-            'classes': [0],
-            'verbose': False
-        }
+        # Run YOLO detection
+        results = self.model(frame, conf=self.conf_threshold, classes=[0], verbose=False)[0]
         
-        if self.tracker_type:
-            track_kwargs['tracker'] = self.tracker_type
+        # Convert to Supervision Detections
+        detections = sv.Detections.from_ultralytics(results)
         
-        # Run tracking
-        results = self.model.track(frame, **track_kwargs)
-        result = results[0]
-        
-        detections = []
+        # Update tracker - ByteTrack will handle tracking IDs
+        if len(detections) > 0:
+            detections = self.tracker.update_with_detections(detections)
         
         # Reset counts
         self.people_inside = 0
         self.people_outside = 0
         
-        # Process detections
-        if result.boxes is not None and result.boxes.id is not None:
-            boxes = result.boxes.xyxy.cpu().numpy()
-            track_ids = result.boxes.id.cpu().numpy().astype(int)
+        # Add inside/outside info to detections
+        if len(detections) > 0 and detections.tracker_id is not None:
+            # Create lists to store custom attributes
+            is_inside_list = []
+            center_list = []
             
-            for box, track_id in zip(boxes, track_ids):
-                x1, y1, x2, y2 = map(int, box)
-                
-                # Center point (bottom center for feet position)
+            for i in range(len(detections)):
+                x1, y1, x2, y2 = detections.xyxy[i]
                 center_x = (x1 + x2) // 2
                 bottom_y = y2
-                center_point = (center_x, bottom_y)
+                center_point = (int(center_x), int(bottom_y))
                 
-                # Check if inside
                 is_inside = self._point_in_polygon(center_point, polygon) if polygon is not None else True
                 
-                # Count
+                is_inside_list.append(is_inside)
+                center_list.append(center_point)
+                
                 if is_inside:
                     self.people_inside += 1
                 else:
                     self.people_outside += 1
-                
-                # Store detection
-                detections.append({
-                    'bbox': (x1, y1, x2, y2),
-                    'track_id': int(track_id),
-                    'is_inside': is_inside,
-                    'center': center_point
-                })
-                
-                # Update track history
-                if track_id not in self.track_history:
-                    self.track_history[track_id] = []
-                
-                self.track_history[track_id].append(center_point)
-                if len(self.track_history[track_id]) > 30:
-                    self.track_history[track_id].pop(0)
+            
+            # Store as attributes on the detections object
+            detections.is_inside = is_inside_list
+            detections.centers = center_list
         
         # Calculate FPS
         current_time = time.time()
@@ -193,7 +173,6 @@ class PersonTracker:
         self.fps_list.append(fps)
         avg_fps = sum(self.fps_list[-30:]) / min(len(self.fps_list), 30)
         
-        # Return all data
         return {
             'detections': detections,
             'people_inside': self.people_inside,
@@ -205,7 +184,6 @@ class PersonTracker:
             'color_outside': self.color_outside,
             'polygon_alpha': self.polygon_alpha,
             'fps': avg_fps,
-            'track_history': self.track_history,
             'frame_count': self.frame_count
         }
     

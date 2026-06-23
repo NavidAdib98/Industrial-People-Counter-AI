@@ -1,6 +1,6 @@
 """
 Visualizer - Handles all drawing/visualization on frames
-Separated from tracking logic for cleaner code
+Uses OpenCV directly for maximum compatibility
 """
 
 import cv2
@@ -9,11 +9,11 @@ import numpy as np
 
 class Visualizer:
     """
-    Handles all drawing operations on frames
+    Handles all drawing operations using OpenCV
     """
     
     def __init__(self):
-        """Initialize visualizer with default settings"""
+        """Initialize visualizer"""
         pass
     
     def draw_polygon(self, frame, polygon_points, color, alpha=0.3, name=None):
@@ -56,25 +56,37 @@ class Visualizer:
     
     def draw_detections(self, frame, detections, color_inside, color_outside):
         """
-        Draw bounding boxes, IDs, and tracks for detections
+        Draw bounding boxes, IDs, and center dots for detections
         
         Args:
             frame: Input frame
-            detections: List of detection dicts
+            detections: sv.Detections object
             color_inside: BGR color for inside polygon
             color_outside: BGR color for outside polygon
             
         Returns:
             frame: Frame with detections drawn
         """
-        for det in detections:
-            x1, y1, x2, y2 = det['bbox']
-            track_id = det['track_id']
-            is_inside = det['is_inside']
-            center = det['center']
+        if len(detections) == 0:
+            return frame
+        
+        # Check if we have inside/outside info
+        has_inside_info = hasattr(detections, 'is_inside')
+        
+        for i in range(len(detections)):
+            # Get bbox
+            x1, y1, x2, y2 = map(int, detections.xyxy[i])
             
-            # Choose color
-            color = color_inside if is_inside else color_outside
+            # Get track ID
+            track_id = detections.tracker_id[i] if detections.tracker_id is not None else i
+            
+            # Determine color
+            if has_inside_info and i < len(detections.is_inside):
+                is_inside = detections.is_inside[i]
+                color = color_inside if is_inside else color_outside
+            else:
+                color = color_inside
+                is_inside = True
             
             # Draw bounding box
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
@@ -85,34 +97,17 @@ class Visualizer:
                 label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2
             )
             
+            # Background for label
             cv2.rectangle(frame, (x1, y1 - label_h - 8), (x1 + label_w, y1), color, -1)
+            
+            # Label text
             cv2.putText(frame, label, (x1, y1 - 4),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
             
-            # Draw center dot
-            cv2.circle(frame, center, 4, color, -1)
-        
-        return frame
-    
-    def draw_tracks(self, frame, track_history):
-        """
-        Draw track paths for all tracked objects
-        
-        Args:
-            frame: Input frame
-            track_history: Dictionary of track_id -> list of points
-            
-        Returns:
-            frame: Frame with tracks drawn
-        """
-        for track_id, points in track_history.items():
-            if len(points) > 1:
-                # Use a consistent color for each track
-                np.random.seed(int(track_id) * 10 + 1)
-                color = tuple(map(int, np.random.randint(50, 255, 3)))
-                
-                for i in range(1, len(points)):
-                    cv2.line(frame, points[i-1], points[i], color, 2)
+            # Draw center dot (bottom center for feet position)
+            center_x = (x1 + x2) // 2
+            bottom_y = y2
+            cv2.circle(frame, (center_x, bottom_y), 4, color, -1)
         
         return frame
     
@@ -142,21 +137,24 @@ class Visualizer:
         cv2.rectangle(overlay, 
                      (panel_x, panel_y), 
                      (panel_x + panel_width, panel_y + panel_height),
-                     (0, 0, 0),
-                     -1)
+                     (0, 0, 0),  # Black
+                     -1)  # Filled
         
+        # Blend with original frame (60% opacity)
         cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
         
-        # Border
+        # Draw border
         cv2.rectangle(frame, 
                      (panel_x, panel_y), 
                      (panel_x + panel_width, panel_y + panel_height),
-                     (100, 100, 100),
+                     (100, 100, 100),  # Gray border
                      1)
         
-        # Text
+        # Starting position for text
         text_x = panel_x + padding
         text_y = panel_y + padding + 15
+        
+        # All text in white
         color = (255, 255, 255)
         
         # FPS
@@ -196,7 +194,7 @@ class Visualizer:
         Returns:
             frame: Fully annotated frame
         """
-        # Draw polygon
+        # Draw polygon (behind detections)
         if tracker_data['polygon_points'] is not None:
             frame = self.draw_polygon(
                 frame,
@@ -206,12 +204,8 @@ class Visualizer:
                 tracker_data['polygon_name']
             )
         
-        # Draw tracks
-        if tracker_data['track_history']:
-            frame = self.draw_tracks(frame, tracker_data['track_history'])
-        
         # Draw detections
-        if tracker_data['detections']:
+        if len(tracker_data['detections']) > 0:
             frame = self.draw_detections(
                 frame,
                 tracker_data['detections'],
@@ -219,7 +213,7 @@ class Visualizer:
                 tracker_data['color_outside']
             )
         
-        # Draw info panel
+        # Draw info panel (on top)
         frame = self.draw_info_panel(
             frame,
             tracker_data['fps'],

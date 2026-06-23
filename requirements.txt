@@ -1,1 +1,2 @@
 ultralytics==8.4.75
+python-dotenv>=1.0.0

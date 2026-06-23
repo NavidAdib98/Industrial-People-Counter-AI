@@ -75,11 +75,31 @@ class PersonTracker:
         self.people_inside = 0
         self.people_outside = 0
         
+        # ==================== HYSTERESIS SETTINGS ====================
+        # Hysteresis thresholds for inside/outside detection
+        # Prevents jitter when people are on the boundary
+        self.hysteresis_inside_threshold = 15   # pixels inside to be considered "inside"
+        self.hysteresis_outside_threshold = 25  # pixels outside to be considered "outside"
+        
+        # Track previous status for each track ID (for hysteresis)
+        # Format: {track_id: {'is_inside': bool, 'last_status_change': frame_count}}
+        self.track_status_history = {}
+        
+        # Minimum frames between status changes (to prevent rapid toggling)
+        self.min_frames_between_changes = 10
+        
+        # ==================== OFFSET SETTINGS ====================
+        # Offset from bottom of bounding box (in pixels)
+        # Using a point slightly above the bottom helps avoid foot-boundary issues
+        self.center_offset = 15  # pixels above the bottom of the box
+        
         print(f"✅ Tracker ready")
         print(f"   Model: {model_path.name}")
         print(f"   Tracker: ByteTrack (Supervision)")
         print(f"   Confidence: {settings.CONF_THRESHOLD}")
         print(f"   Device: {settings.DEVICE}")
+        print(f"   Hysteresis: Inside={self.hysteresis_inside_threshold}px, Outside={self.hysteresis_outside_threshold}px")
+        print(f"   Center Offset: {self.center_offset}px above bottom")
         
         if self.polygon_loader:
             print(f"   Polygon: {self.polygon_name} ({len(self.polygon_loader.points)} points)")
@@ -95,6 +115,127 @@ class PersonTracker:
             return False
         import cv2
         return cv2.pointPolygonTest(polygon, point, False) >= 0
+    
+    def _get_point_with_offset(self, x1, y1, x2, y2):
+        """
+        Get the reference point for inside/outside check with offset
+        
+        Instead of using the bottom center, we use a point slightly above
+        the bottom to avoid foot-boundary issues.
+        
+        Args:
+            x1, y1, x2, y2: Bounding box coordinates
+            
+        Returns:
+            tuple: (center_x, reference_y) - reference point with offset
+        """
+        center_x = (x1 + x2) // 2
+        bottom_y = y2
+        
+        # Apply offset: move the reference point UP from the bottom
+        # This helps when people's feet are on the boundary but their body is inside
+        ref_y = bottom_y - self.center_offset
+        
+        return int(center_x), int(ref_y)
+    
+    def _distance_to_polygon_boundary(self, point, polygon):
+        """
+        Calculate the distance from a point to the polygon boundary
+        
+        Returns:
+            float: Positive if inside, negative if outside
+        """
+        import cv2
+        if polygon is None or len(polygon) < 3:
+            return float('inf')
+        
+        # cv2.pointPolygonTest returns:
+        #   Positive: distance from point to polygon boundary (inside)
+        #   Negative: distance from point to polygon boundary (outside)
+        #   0: point is on boundary
+        return cv2.pointPolygonTest(polygon, point, True)
+    
+    def _is_inside_with_hysteresis(self, track_id, point, polygon, current_frame):
+        """
+        Determine if a point is inside the polygon using hysteresis
+        
+        Args:
+            track_id: The track ID
+            point: The reference point (x, y)
+            polygon: The polygon points
+            current_frame: Current frame number
+            
+        Returns:
+            bool: True if inside, False if outside
+        """
+        if polygon is None or len(polygon) < 3:
+            return True
+        
+        # Get distance to polygon boundary
+        distance = self._distance_to_polygon_boundary(point, polygon)
+        
+        # Get previous status for this track
+        prev_status = self.track_status_history.get(track_id, {
+            'is_inside': True,
+            'last_status_change': 0,
+            'frames_inside': 0,
+            'frames_outside': 0
+        })
+        
+        # Calculate frames since last change
+        frames_since_change = current_frame - prev_status.get('last_status_change', 0)
+        
+        # If we've changed status recently, prevent rapid toggling
+        if frames_since_change < self.min_frames_between_changes:
+            return prev_status.get('is_inside', True)
+        
+        # Determine new status based on hysteresis
+        if prev_status.get('is_inside', True):
+            # Currently inside - need to go outside_threshold to switch
+            if distance > -self.hysteresis_outside_threshold:
+                # Still inside (or just slightly outside)
+                new_status = True
+            else:
+                # Far enough outside - switch to outside
+                new_status = False
+        else:
+            # Currently outside - need to go inside_threshold to switch
+            if distance < self.hysteresis_inside_threshold:
+                # Still outside (or just slightly inside)
+                new_status = False
+            else:
+                # Far enough inside - switch to inside
+                new_status = True
+        
+        # Update history if status changed
+        if new_status != prev_status.get('is_inside', True):
+            prev_status['last_status_change'] = current_frame
+        
+        prev_status['is_inside'] = new_status
+        
+        # Track frames inside/outside (for additional stability)
+        if new_status:
+            prev_status['frames_inside'] = prev_status.get('frames_inside', 0) + 1
+            prev_status['frames_outside'] = 0
+        else:
+            prev_status['frames_outside'] = prev_status.get('frames_outside', 0) + 1
+            prev_status['frames_inside'] = 0
+        
+        # Additional stability: require at least 3 consecutive frames to change
+        # This prevents flickering due to detection noise
+        if frames_since_change >= self.min_frames_between_changes:
+            # Check if we have enough consecutive frames
+            if new_status:
+                if prev_status.get('frames_inside', 0) < 3:
+                    new_status = prev_status.get('is_inside', True)
+            else:
+                if prev_status.get('frames_outside', 0) < 3:
+                    new_status = prev_status.get('is_inside', True)
+        
+        # Update history
+        self.track_status_history[track_id] = prev_status
+        
+        return new_status
     
     def process_frame(self, frame):
         """
@@ -147,14 +288,22 @@ class PersonTracker:
             
             for i in range(len(detections)):
                 x1, y1, x2, y2 = detections.xyxy[i]
-                center_x = (x1 + x2) // 2
-                bottom_y = y2
-                center_point = (int(center_x), int(bottom_y))
+                track_id = int(detections.tracker_id[i])
                 
-                is_inside = self._point_in_polygon(center_point, polygon) if polygon is not None else True
+                # Get reference point with OFFSET (above bottom)
+                center_x, ref_y = self._get_point_with_offset(x1, y1, x2, y2)
+                ref_point = (center_x, ref_y)
+                
+                # Check if inside using HYSTERESIS
+                is_inside = self._is_inside_with_hysteresis(
+                    track_id, ref_point, polygon, self.frame_count
+                ) if polygon is not None else True
+                
+                # Store the reference point (bottom center for display)
+                bottom_center = (int(center_x), int(y2))
                 
                 is_inside_list.append(is_inside)
-                center_list.append(center_point)
+                center_list.append(bottom_center)
                 
                 if is_inside:
                     self.people_inside += 1
@@ -203,3 +352,8 @@ class PersonTracker:
             'outside': self.people_outside,
             'total': self.people_inside + self.people_outside
         }
+    
+    def reset_track_status(self):
+        """Reset the track status history (useful when changing video or polygon)"""
+        self.track_status_history = {}
+        print("🔄 Track status history reset")

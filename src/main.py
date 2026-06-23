@@ -36,6 +36,13 @@ def main():
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     
     print(f"✅ Video: {width}x{height}, {fps} FPS, {total_frames} frames")
+    
+    # Show polygon info if available
+    if settings.polygon_data:
+        polygon = settings.get_polygon_points(width, height)
+        if polygon is not None:
+            print(f"✅ Polygon: {len(polygon)} points")
+            print(f"   Name: {settings.polygon_data.get('name', 'Unknown')}")
     print()
     
     # Setup video writer
@@ -71,9 +78,12 @@ def main():
         if settings.SAVE_OUTPUT and video_writer:
             video_writer.write(annotated_frame)
         
-        # Show progress
+        # Show progress with polygon counts
+        counts = tracker.get_counts()
         progress = (frame_count / total_frames * 100) if total_frames > 0 else 0
-        print(f"Frame {frame_count}/{total_frames} ({progress:.1f}%) - {len(detections)} people", end='\r')
+        print(f"Frame {frame_count}/{total_frames} ({progress:.1f}%) - "
+              f"Inside: {counts['inside']}, Outside: {counts['outside']}, "
+              f"Total: {counts['total']}", end='\r')
         
         # Show preview
         if settings.SHOW_PREVIEW:
@@ -94,6 +104,14 @@ def main():
         print(f"Average FPS: {stats['avg_fps']:.2f}")
         print(f"Max FPS: {stats['max_fps']:.2f}")
         print(f"Min FPS: {stats['min_fps']:.2f}")
+    
+    counts = tracker.get_counts()
+    print()
+    print("📊 PEOPLE COUNTS")
+    print("=" * 50)
+    print(f"People Inside: {counts['inside']}")
+    print(f"People Outside: {counts['outside']}")
+    print(f"Total People: {counts['total']}")
     
     print()
     if settings.SAVE_OUTPUT:

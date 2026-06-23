@@ -1,0 +1,27 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Main Zone",
+        "description": "Main monitoring area",
+        "color_inside": [0, 255, 0],
+        "color_outside": [255, 0, 0],
+        "alpha": 0.3
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [0.20, 0.20],
+            [0.80, 0.20],
+            [0.80, 0.80],
+            [0.20, 0.80],
+            [0.20, 0.20]
+          ]
+        ]
+      }
+    }
+  ]
+}

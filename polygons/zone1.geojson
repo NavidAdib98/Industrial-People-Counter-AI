@@ -1,0 +1,31 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Entrance Area",
+        "description": "Main entrance monitoring zone",
+        "color_inside": [0, 255, 0],
+        "color_outside": [255, 0, 0],
+        "alpha": 0.35
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [0.15, 0.15],
+            [0.85, 0.15],
+            [0.85, 0.45],
+            [0.60, 0.45],
+            [0.60, 0.55],
+            [0.85, 0.55],
+            [0.85, 0.85],
+            [0.15, 0.85],
+            [0.15, 0.15]
+          ]
+        ]
+      }
+    }
+  ]
+}

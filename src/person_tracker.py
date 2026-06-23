@@ -48,6 +48,11 @@ class PersonTracker:
         self.tracker_type = settings.TRACKER_TYPE
         self.device = settings.DEVICE
         
+        # Get polygon colors and alpha from settings
+        self.color_inside, self.color_outside = settings.get_polygon_colors()
+        self.polygon_alpha = settings.get_polygon_alpha()
+        self.polygon_name = settings.get_polygon_name()
+        
         # Performance tracking
         self.frame_count = 0
         self.fps_list = []
@@ -55,6 +60,10 @@ class PersonTracker:
         
         # Track history for paths
         self.track_history = {}
+        
+        # People inside/outside counts
+        self.people_inside = 0
+        self.people_outside = 0
         
         # Determine model type for display
         model_path_str = str(model_path)
@@ -73,8 +82,80 @@ class PersonTracker:
         print(f"   Tracker: {settings.TRACKER_TYPE}")
         print(f"   Confidence: {settings.CONF_THRESHOLD}")
         print(f"   Device: {settings.DEVICE}")
+        
+        if settings.polygon_data:
+            polygon_name = settings.polygon_data.get('name', 'Unknown')
+            polygon_points = len(settings.polygon_data['points'])
+            inside_rgb, outside_rgb = settings.get_polygon_colors_rgb()
+            print(f"   Polygon: {polygon_name} ({polygon_points} points)")
+            print(f"   Inside Color (RGB): {inside_rgb}")
+            print(f"   Outside Color (RGB): {outside_rgb}")
+        else:
+            print(f"   Polygon: None (no ROI)")
+        
         print("=" * 50)
         print()
+    
+    def _point_in_polygon(self, point, polygon):
+        """
+        Check if a point is inside a polygon using ray casting
+        
+        Args:
+            point: (x, y) tuple
+            polygon: List of (x, y) tuples (pixel coordinates)
+            
+        Returns:
+            bool: True if point is inside polygon
+        """
+        if polygon is None or len(polygon) < 3:
+            return False
+        
+        return cv2.pointPolygonTest(polygon, point, False) >= 0
+    
+    def _draw_polygon(self, frame, polygon):
+        """
+        Draw polygon on frame with transparency
+        
+        Args:
+            frame: Input frame
+            polygon: List of (x, y) tuples (pixel coordinates)
+            
+        Returns:
+            frame: Frame with polygon drawn
+        """
+        if polygon is None or len(polygon) < 3:
+            return frame
+        
+        # Create overlay for transparency
+        overlay = frame.copy()
+        
+        # Draw filled polygon with inside color (green)
+        cv2.fillPoly(overlay, [polygon], self.color_inside)
+        
+        # Blend with original frame
+        cv2.addWeighted(overlay, self.polygon_alpha, frame, 1 - self.polygon_alpha, 0, frame)
+        
+        # Draw polygon outline (green)
+        cv2.polylines(frame, [polygon], True, self.color_inside, 2)
+        
+        # Draw polygon name
+        if self.polygon_name:
+            # Get centroid for text placement
+            moments = cv2.moments(polygon)
+            if moments['m00'] != 0:
+                cx = int(moments['m10'] / moments['m00'])
+                cy = int(moments['m01'] / moments['m00'])
+                cv2.putText(
+                    frame,
+                    self.polygon_name,
+                    (cx - 40, cy),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    self.color_inside,
+                    2
+                )
+        
+        return frame
     
     def process_frame(self, frame):
         """
@@ -88,6 +169,12 @@ class PersonTracker:
             detections: List of detections
         """
         self.frame_count += 1
+        
+        # Get frame dimensions
+        height, width = frame.shape[:2]
+        
+        # Get polygon points for this frame (pixel coordinates)
+        polygon = self.settings.get_polygon_points(width, height)
         
         # Prepare tracking arguments
         track_kwargs = {
@@ -109,6 +196,14 @@ class PersonTracker:
         annotated_frame = frame.copy()
         detections = []
         
+        # Reset counts
+        self.people_inside = 0
+        self.people_outside = 0
+        
+        # Draw polygon first (so it's behind the boxes)
+        if polygon is not None:
+            annotated_frame = self._draw_polygon(annotated_frame, polygon)
+        
         # Process detections
         if result.boxes is not None and result.boxes.id is not None:
             boxes = result.boxes.xyxy.cpu().numpy()
@@ -118,22 +213,49 @@ class PersonTracker:
             for box, track_id, conf in zip(boxes, track_ids, confidences):
                 x1, y1, x2, y2 = map(int, box)
                 
+                # Calculate center point (bottom center for feet position)
+                center_x = (x1 + x2) // 2
+                bottom_y = y2  # Bottom of the bounding box
+                center_point = (center_x, bottom_y)
+                
+                # Check if person is inside polygon
+                is_inside = self._point_in_polygon(center_point, polygon) if polygon is not None else True
+                
+                # Choose color based on inside/outside
+                if is_inside:
+                    color = self.color_inside  # Green
+                else:
+                    color = self.color_outside  # Red
+                
+                # Count
+                if is_inside:
+                    self.people_inside += 1
+                else:
+                    self.people_outside += 1
+                
                 detections.append({
                     'bbox': (x1, y1, x2, y2),
                     'track_id': int(track_id),
-                    'confidence': float(conf)
+                    'confidence': float(conf),
+                    'is_inside': is_inside,
+                    'center': center_point
                 })
                 
-                # Draw bounding box
-                color = self._get_color(track_id)
+                # Draw bounding box with appropriate color
                 cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), color, 2)
                 
-                # Draw ID label
+                # Draw ID label (without confidence score)
                 label = f"ID:{track_id}"
+                if is_inside:
+                    label += " ✓"  # Checkmark for inside
+                else:
+                    label += " ✗"  # X for outside
+                
                 (label_w, label_h), _ = cv2.getTextSize(
                     label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2
                 )
                 
+                # Background for label (using same color as box)
                 cv2.rectangle(
                     annotated_frame,
                     (x1, y1 - label_h - 8),
@@ -142,6 +264,7 @@ class PersonTracker:
                     -1
                 )
                 
+                # Label text (white for readability)
                 cv2.putText(
                     annotated_frame,
                     label,
@@ -152,12 +275,14 @@ class PersonTracker:
                     2
                 )
                 
-                # Draw track path
-                center = ((x1 + x2) // 2, (y1 + y2) // 2)
+                # Draw a dot at the reference point (bottom center)
+                cv2.circle(annotated_frame, center_point, 4, color, -1)
+                
+                # Draw track path with color based on inside/outside
                 if track_id not in self.track_history:
                     self.track_history[track_id] = []
                 
-                self.track_history[track_id].append(center)
+                self.track_history[track_id].append(center_point)
                 if len(self.track_history[track_id]) > 30:
                     self.track_history[track_id].pop(0)
                 
@@ -174,26 +299,70 @@ class PersonTracker:
         
         avg_fps = sum(self.fps_list[-30:]) / min(len(self.fps_list), 30)
         
-        # Draw stats
+        # Draw stats with polygon info
+        y_position = 30
+        
+        # FPS
         cv2.putText(
             annotated_frame,
             f"FPS: {avg_fps:.1f}",
-            (10, 30),
+            (10, y_position),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.7,
             (0, 255, 0),
             2
         )
+        y_position += 30
         
+        # Total people
+        total_people = self.people_inside + self.people_outside
         cv2.putText(
             annotated_frame,
-            f"People: {len(detections)}",
-            (10, 60),
+            f"Total: {total_people}",
+            (10, y_position),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.7,
-            (0, 255, 0),
+            (255, 255, 255),
             2
         )
+        y_position += 30
+        
+        # People inside (green)
+        cv2.putText(
+            annotated_frame,
+            f"Inside: {self.people_inside}",
+            (10, y_position),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            self.color_inside,
+            2
+        )
+        y_position += 30
+        
+        # People outside (red)
+        cv2.putText(
+            annotated_frame,
+            f"Outside: {self.people_outside}",
+            (10, y_position),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.7,
+            self.color_outside,
+            2
+        )
+        y_position += 30
+        
+        # Show polygon name if available
+        if polygon is not None and self.polygon_name:
+            cv2.putText(
+                annotated_frame,
+                f"Zone: {self.polygon_name}",
+                (10, y_position),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                self.color_inside,
+                1
+            )
+            y_position += 25
         
         # Show model type
         model_path_str = str(self.settings.MODEL_PATH)
@@ -209,7 +378,7 @@ class PersonTracker:
         cv2.putText(
             annotated_frame,
             f"Model: {model_type}",
-            (10, 90),
+            (10, y_position),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.5,
             (200, 200, 200),
@@ -219,7 +388,7 @@ class PersonTracker:
         return annotated_frame, detections
     
     def _get_color(self, track_id):
-        """Generate consistent color for track ID"""
+        """Generate consistent color for track ID (fallback - not used anymore)"""
         np.random.seed(int(track_id) * 10 + 1)
         return tuple(map(int, np.random.randint(50, 255, 3)))
     
@@ -233,3 +402,11 @@ class PersonTracker:
                 'min_fps': min(self.fps_list)
             }
         return None
+    
+    def get_counts(self):
+        """Get people counts"""
+        return {
+            'inside': self.people_inside,
+            'outside': self.people_outside,
+            'total': self.people_inside + self.people_outside
+        }

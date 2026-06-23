@@ -37,6 +37,11 @@ class Settings:
         self.SAVE_OUTPUT = self._get_bool('SAVE_OUTPUT', True)
         self.SHOW_PREVIEW = self._get_bool('SHOW_PREVIEW', True)
         
+        # Video resize settings
+        self.RESIZE_VIDEO = self._get_bool('RESIZE_VIDEO', False)
+        self.RESIZE_WIDTH = self._get_int('RESIZE_WIDTH', 640)
+        self.RESIZE_HEIGHT = self._get_int('RESIZE_HEIGHT', 480)
+        
         # Polygon settings
         self.POLYGON_FILE = self._get('POLYGON_FILE', None)
         
@@ -70,6 +75,13 @@ class Settings:
     def _get(self, key, default):
         """Get string value from environment"""
         return os.getenv(key, default)
+    
+    def _get_int(self, key, default):
+        """Get integer value from environment"""
+        try:
+            return int(os.getenv(key, default))
+        except ValueError:
+            return default
     
     def _get_float(self, key, default):
         """Get float value from environment"""
@@ -296,6 +308,13 @@ class Settings:
         print(f"CONF_THRESHOLD: {self.CONF_THRESHOLD}")
         print(f"DEVICE: {self.DEVICE}")
         print(f"TRACKER_TYPE: {self.TRACKER_TYPE}")
+        
+        # Print resize settings
+        print(f"RESIZE_VIDEO: {self.RESIZE_VIDEO}")
+        if self.RESIZE_VIDEO:
+            print(f"RESIZE_WIDTH: {self.RESIZE_WIDTH}")
+            print(f"RESIZE_HEIGHT: {self.RESIZE_HEIGHT}")
+        
         print(f"SAVE_OUTPUT: {self.SAVE_OUTPUT}")
         print(f"SHOW_PREVIEW: {self.SHOW_PREVIEW}")
         

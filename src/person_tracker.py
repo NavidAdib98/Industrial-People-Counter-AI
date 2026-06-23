@@ -246,10 +246,6 @@ class PersonTracker:
                 
                 # Draw ID label (without confidence score)
                 label = f"ID:{track_id}"
-                if is_inside:
-                    label += " ✓"  # Checkmark for inside
-                else:
-                    label += " ✗"  # X for outside
                 
                 (label_w, label_h), _ = cv2.getTextSize(
                     label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2

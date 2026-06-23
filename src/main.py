@@ -29,17 +29,26 @@ def main():
         print(f"   Check VIDEO_PATH in .env file")
         return
     
-    # Get video info
-    fps = int(cap.get(cv2.CAP_PROP_FPS))
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    # Get original video info
+    original_fps = int(cap.get(cv2.CAP_PROP_FPS))
+    original_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    original_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     
-    print(f"✅ Video: {width}x{height}, {fps} FPS, {total_frames} frames")
+    # Determine output size (resized or original)
+    if settings.RESIZE_VIDEO:
+        output_width = settings.RESIZE_WIDTH
+        output_height = settings.RESIZE_HEIGHT
+        print(f"✅ Original Video: {original_width}x{original_height}, {original_fps} FPS")
+        print(f"✅ Resizing to: {output_width}x{output_height} (for faster processing)")
+    else:
+        output_width = original_width
+        output_height = original_height
+        print(f"✅ Video: {original_width}x{original_height}, {original_fps} FPS, {total_frames} frames")
     
     # Show polygon info if available
     if settings.polygon_data:
-        polygon = settings.get_polygon_points(width, height)
+        polygon = settings.get_polygon_points(output_width, output_height)
         if polygon is not None:
             print(f"✅ Polygon: {len(polygon)} points")
             print(f"   Name: {settings.polygon_data.get('name', 'Unknown')}")
@@ -52,10 +61,10 @@ def main():
         video_writer = cv2.VideoWriter(
             str(settings.OUTPUT_VIDEO),
             fourcc,
-            fps,
-            (width, height)
+            original_fps,
+            (output_width, output_height)
         )
-        print(f"💾 Output: {settings.OUTPUT_VIDEO}")
+        print(f"💾 Output: {settings.OUTPUT_VIDEO} ({output_width}x{output_height})")
         print()
     
     # Process video
@@ -70,6 +79,10 @@ def main():
             break
         
         frame_count += 1
+        
+        # Resize frame if enabled
+        if settings.RESIZE_VIDEO:
+            frame = cv2.resize(frame, (output_width, output_height))
         
         # Process frame
         annotated_frame, detections = tracker.process_frame(frame)
@@ -104,6 +117,8 @@ def main():
         print(f"Average FPS: {stats['avg_fps']:.2f}")
         print(f"Max FPS: {stats['max_fps']:.2f}")
         print(f"Min FPS: {stats['min_fps']:.2f}")
+        if settings.RESIZE_VIDEO:
+            print(f"Processing Resolution: {output_width}x{output_height}")
     
     counts = tracker.get_counts()
     print()

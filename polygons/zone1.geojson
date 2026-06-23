@@ -8,7 +8,7 @@
         "description": "Main entrance monitoring zone",
         "color_inside": [0, 255, 0],
         "color_outside": [255, 0, 0],
-        "alpha": 0.35
+        "alpha": 0.1
       },
       "geometry": {
         "type": "Polygon",

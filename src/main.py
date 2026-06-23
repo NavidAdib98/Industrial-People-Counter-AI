@@ -38,12 +38,14 @@ class RealtimeTracker:
         # Statistics
         self.frame_count = 0
         self.start_time = time.time()
+        self.processed_frames_for_save = []  # Store frames for saving
+        self.save_fps = 0
         
-        # Setup video writer (for saving output)
+        # Setup video writer
         self.video_writer = None
-        if settings.SAVE_OUTPUT:
-            # We'll initialize this when we know the video size
-            pass
+        self.output_width = 0
+        self.output_height = 0
+        self.original_fps = 30
     
     def process_frame(self, frame):
         """
@@ -57,6 +59,11 @@ class RealtimeTracker:
         # Resize if enabled
         if settings.RESIZE_VIDEO:
             frame = cv2.resize(frame, (settings.RESIZE_WIDTH, settings.RESIZE_HEIGHT))
+            self.output_width = settings.RESIZE_WIDTH
+            self.output_height = settings.RESIZE_HEIGHT
+        else:
+            self.output_width = frame.shape[1]
+            self.output_height = frame.shape[0]
         
         # Process frame (this is the slow part)
         tracker_data = self.tracker.process_frame(frame)
@@ -69,9 +76,54 @@ class RealtimeTracker:
             self.latest_annotated_frame = annotated_frame
             self.latest_tracker_data = tracker_data
         
-        # Save if enabled
-        if settings.SAVE_OUTPUT and self.video_writer:
-            self.video_writer.write(annotated_frame)
+        # Save frame if enabled - store for later writing
+        if settings.SAVE_OUTPUT:
+            self.processed_frames_for_save.append(annotated_frame)
+    
+    def _calculate_save_fps(self):
+        """Calculate the actual processing FPS for saving"""
+        if self.frame_count > 0 and self.start_time:
+            elapsed = time.time() - self.start_time
+            if elapsed > 0:
+                return self.frame_count / elapsed
+        return 5  # Default fallback
+    
+    def _write_saved_video(self):
+        """Write the saved frames to a video file with correct FPS"""
+        if not self.processed_frames_for_save:
+            print("⚠️  No frames to save")
+            return
+        
+        # Calculate actual processing FPS
+        self.save_fps = self._calculate_save_fps()
+        print(f"📊 Saving video at {self.save_fps:.1f} FPS (actual processing speed)")
+        
+        # Ensure FPS is reasonable (min 1, max 30)
+        save_fps = max(1, min(30, self.save_fps))
+        
+        # Get dimensions from first frame
+        first_frame = self.processed_frames_for_save[0]
+        height, width = first_frame.shape[:2]
+        
+        # Create video writer
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        output_path = settings.OUTPUT_VIDEO
+        video_writer = cv2.VideoWriter(
+            str(output_path),
+            fourcc,
+            save_fps,
+            (width, height)
+        )
+        
+        # Write all frames
+        for frame in self.processed_frames_for_save:
+            video_writer.write(frame)
+        
+        video_writer.release()
+        print(f"✅ Video saved: {output_path}")
+        print(f"   Frames: {len(self.processed_frames_for_save)}")
+        print(f"   FPS: {save_fps:.1f}")
+        print(f"   Duration: {len(self.processed_frames_for_save) / save_fps:.1f} seconds")
     
     def run(self):
         """
@@ -81,28 +133,13 @@ class RealtimeTracker:
         processor = RealtimeProcessor(settings.VIDEO_PATH)
         processor.process_callback = self.process_frame
         
-        # Initialize video writer with correct dimensions
-        if settings.SAVE_OUTPUT:
-            width = settings.RESIZE_WIDTH if settings.RESIZE_VIDEO else processor.width
-            height = settings.RESIZE_HEIGHT if settings.RESIZE_VIDEO else processor.height
-            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-            self.video_writer = cv2.VideoWriter(
-                str(settings.OUTPUT_VIDEO),
-                fourcc,
-                processor.fps,
-                (width, height)
-            )
-            print(f"💾 Output: {settings.OUTPUT_VIDEO}")
-            print()
-        
         # Start processor
         processor.start()
         
         print("🚀 Real-time tracking started... Press 'q' to quit")
         print("-" * 50)
         
-        # FPS display counter
-        display_counter = 0
+        # Display counter
         last_display_time = time.time()
         
         try:
@@ -121,7 +158,6 @@ class RealtimeTracker:
                     # Update display every 0.5 seconds
                     current_time = time.time()
                     if current_time - last_display_time >= 0.5:
-                        display_counter += 1
                         last_display_time = current_time
                         
                         # Show clear status
@@ -141,16 +177,14 @@ class RealtimeTracker:
                 if key == ord('q') or key == 27:
                     break
                 
-                time.sleep(0.001)  # Small sleep to prevent CPU spinning
+                time.sleep(0.001)
         
         except KeyboardInterrupt:
             print("\n⚠️  Interrupted by user")
         
         finally:
-            # Cleanup
+            # Stop processor
             processor.stop()
-            if self.video_writer:
-                self.video_writer.release()
             cv2.destroyAllWindows()
         
         # Show final statistics
@@ -175,8 +209,9 @@ class RealtimeTracker:
         elapsed = time.time() - self.start_time
         print(f"\n⏱️  Total runtime: {elapsed:.1f} seconds")
         
-        if settings.SAVE_OUTPUT:
-            print(f"✅ Output saved: {settings.OUTPUT_VIDEO}")
+        # Write saved video
+        if settings.SAVE_OUTPUT and self.processed_frames_for_save:
+            self._write_saved_video()
         
         print()
         print("🎉 Done!")
@@ -184,7 +219,6 @@ class RealtimeTracker:
 
 def main():
     """Main function"""
-    # Create and run real-time tracker
     rt_tracker = RealtimeTracker()
     rt_tracker.run()
 

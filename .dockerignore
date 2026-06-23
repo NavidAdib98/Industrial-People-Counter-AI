@@ -1,0 +1,94 @@
+# .dockerignore
+
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+*.whl
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Docker
+Dockerfile
+.dockerignore
+docker-compose.yml
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+.nfs*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Output and data directories (these will be volumes)
+/outputs/
+/videos/
+/models/
+/polygons/
+
+# Environment files (provide via volume or bind mount)
+.env
+.env.local
+.env.*.local
+
+# Test files
+/tests/
+/test_data/
+*.test.py
+pytest_cache/
+.coverage
+htmlcov/
+
+# Documentation
+*.md
+README.md
+LICENSE
+docs/
+
+# Notebooks
+*.ipynb
+.ipynb_checkpoints/
+
+# Large model files (if any - download at runtime or mount)
+*.pt
+*.pth
+*.onnx
+*.engine
+*.trt
+
+# Compression files
+*.zip
+*.tar.gz
+*.tgz
+*.rar
+*.7z
+
+# __pycache__ specifically
+**/__pycache__/
+**/*.pyc

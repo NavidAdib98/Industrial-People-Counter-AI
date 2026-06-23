@@ -1,141 +1,254 @@
 """
-Main script - runs the person tracker on a video
+Main script - runs the person tracker in real-time
 """
 
 import cv2
-from tracker import PersonTracker
-from visualizer import Visualizer
-from settings import settings
+import time
+import threading
+import logging
+from core.tracker import PersonTracker
+from visualization.visualizer import Visualizer
+from utils.settings import settings
+from core.realtime_processor import RealtimeProcessor
+
+# Get logger for this module
+logger = logging.getLogger(__name__)
+
+
+class RealtimeTracker:
+    """
+    Real-time tracker that processes frames as they arrive
+    """
+    
+    def __init__(self):
+        """Initialize real-time tracker"""
+        logger.info("=" * 50)
+        logger.info("REAL-TIME INDUSTRIAL PEOPLE TRACKER")
+        logger.info("=" * 50)
+        
+        # Show settings
+        settings.print_settings()
+        
+        # Initialize tracker and visualizer
+        self.tracker = PersonTracker(settings)
+        self.visualizer = Visualizer()
+        
+        # Latest processed results
+        self.latest_annotated_frame = None
+        self.latest_tracker_data = None
+        self.result_lock = threading.Lock()
+        
+        # Statistics
+        self.frame_count = 0
+        self.start_time = time.time()
+        self.processed_frames_for_save = []  # Store frames for saving
+        
+        logger.info("Realtime Tracker initialized")
+    
+    def process_frame(self, frame_data):
+        """
+        Process a single frame - called by the processor thread
+        
+        Args:
+            frame_data: FrameData object containing frame and metadata
+        """
+        self.frame_count += 1
+        
+        # Get frame and metadata
+        frame = frame_data.frame
+        video_frame_number = frame_data.frame_number
+        video_time = frame_data.video_time
+        timestamp = frame_data.timestamp
+        
+        # Resize if enabled
+        if settings.RESIZE_VIDEO:
+            frame = cv2.resize(frame, (settings.RESIZE_WIDTH, settings.RESIZE_HEIGHT))
+        
+        # Process frame with metadata
+        tracker_data = self.tracker.process_frame(
+            frame,
+            video_frame_number=video_frame_number,
+            video_time=video_time,
+            timestamp=timestamp
+        )
+        
+        # Annotate frame
+        annotated_frame = self.visualizer.annotate_frame(frame, tracker_data)
+        
+        # Store results
+        with self.result_lock:
+            self.latest_annotated_frame = annotated_frame
+            self.latest_tracker_data = tracker_data
+        
+        # Save frame if enabled - store for later writing
+        if settings.SAVE_OUTPUT:
+            self.processed_frames_for_save.append(annotated_frame)
+    
+    def _calculate_save_fps(self):
+        """
+        Calculate the actual processing FPS for saving
+        
+        Returns:
+            float: FPS for saving
+        """
+        if self.frame_count > 0 and self.start_time:
+            elapsed = time.time() - self.start_time
+            if elapsed > 0:
+                return self.frame_count / elapsed
+        return 5  # Default fallback
+    
+    def _write_saved_video(self):
+        """
+        Write the saved frames to a video file with correct FPS
+        """
+        if not self.processed_frames_for_save:
+            logger.warning("No frames to save")
+            return
+        
+        # Calculate actual processing FPS
+        save_fps = self._calculate_save_fps()
+        logger.info(f"Saving video at {save_fps:.1f} FPS (actual processing speed)")
+        
+        # Ensure FPS is reasonable (min 1, max 30)
+        save_fps = max(1, min(30, save_fps))
+        
+        # Get dimensions from first frame
+        first_frame = self.processed_frames_for_save[0]
+        height, width = first_frame.shape[:2]
+        
+        # Create video writer
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        output_path = settings.OUTPUT_VIDEO
+        video_writer = cv2.VideoWriter(
+            str(output_path),
+            fourcc,
+            save_fps,
+            (width, height)
+        )
+        
+        # Write all frames
+        for frame in self.processed_frames_for_save:
+            video_writer.write(frame)
+        
+        video_writer.release()
+        logger.info(f"Video saved: {output_path}")
+        logger.info(f"   Frames: {len(self.processed_frames_for_save)}")
+        logger.info(f"   FPS: {save_fps:.1f}")
+        logger.info(f"   Duration: {len(self.processed_frames_for_save) / save_fps:.1f} seconds")
+    
+    def run(self):
+        """
+        Main loop - runs the real-time processor
+        """
+        # Initialize processor
+        processor = RealtimeProcessor(settings.VIDEO_PATH)
+        processor.process_callback = self.process_frame
+        
+        # Start processor
+        processor.start()
+        
+        logger.info("Real-time tracking started... Press 'q' to quit")
+        logger.info("-" * 60)
+        
+        # Display counter
+        last_display_time = time.time()
+        frame_display_count = 0
+        
+        try:
+            # Main display loop
+            while True:
+                # Check if video ended
+                stats = processor.get_stats()
+                if stats.get('video_ended', False):
+                    logger.info("Video ended - stopping")
+                    break
+                
+                # Get latest results
+                with self.result_lock:
+                    annotated_frame = self.latest_annotated_frame
+                    tracker_data = self.latest_tracker_data
+                
+                # Display if available
+                if annotated_frame is not None and settings.SHOW_PREVIEW:
+                    # Get processor stats
+                    stats = processor.get_stats()
+                    
+                    # Update display every 0.5 seconds
+                    current_time = time.time()
+                    if current_time - last_display_time >= 0.5:
+                        last_display_time = current_time
+                        frame_display_count += 1
+                        
+                        # Show clear status with all metrics
+                        if tracker_data:
+                            status = (f"Read: {stats['read_fps']} FPS | "
+                                     f"Target: {stats['target_fps']} FPS | "
+                                     f"Process: {stats['process_fps']} FPS | "
+                                     f"Queue: {stats['queue_size']} | "
+                                     f"Inside: {tracker_data['people_inside']} | "
+                                     f"Outside: {tracker_data['people_outside']} | "
+                                     f"Total: {tracker_data['total']}")
+                            # Use print for status line (keeps it on one line)
+                            print(status, end='\r')
+                    
+                    cv2.imshow('Real-Time People Tracker', annotated_frame)
+                
+                # Check for quit
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord('q') or key == 27:
+                    break
+                
+                time.sleep(0.001)  # Small sleep to prevent CPU spinning
+        
+        except KeyboardInterrupt:
+            logger.info("Interrupted by user")
+        
+        finally:
+            # Stop processor
+            processor.stop()
+            cv2.destroyAllWindows()
+        
+        # Show final statistics
+        logger.info("-" * 60)
+        logger.info("FINAL STATISTICS")
+        logger.info("=" * 60)
+        
+        stats = self.tracker.get_stats()
+        if stats:
+            logger.info(f"Total Frames Processed: {stats['total_frames']}")
+            logger.info(f"Average Process FPS: {stats['avg_fps']:.2f}")
+            logger.info(f"Max Process FPS: {stats['max_fps']:.2f}")
+            logger.info(f"Min Process FPS: {stats['min_fps']:.2f}")
+        
+        counts = self.tracker.get_counts()
+        logger.info("")
+        logger.info("PEOPLE COUNTS")
+        logger.info("=" * 60)
+        logger.info(f"People Inside: {counts['inside']}")
+        logger.info(f"People Outside: {counts['outside']}")
+        logger.info(f"Total People: {counts['total']}")
+        
+        elapsed = time.time() - self.start_time
+        logger.info(f"Total runtime: {elapsed:.1f} seconds")
+        
+        # Write saved video
+        if settings.SAVE_OUTPUT and self.processed_frames_for_save:
+            self._write_saved_video()
+        
+        # Save events
+        logger.info("")
+        logger.info("SAVING EVENTS...")
+        logger.info("=" * 60)
+        self.tracker.save_events()
+        
+        logger.info("")
+        logger.info("Done!")
 
 
 def main():
     """Main function"""
-    print("=" * 50)
-    print("👥 INDUSTRIAL PEOPLE TRACKER")
-    print("=" * 50)
-    print()
-    
-    # Show settings
-    settings.print_settings()
-    
-    # Initialize tracker and visualizer
-    tracker = PersonTracker(settings)
-    visualizer = Visualizer()
-    
-    # Open video
-    print(f"📹 Opening: {settings.VIDEO_PATH}")
-    cap = cv2.VideoCapture(str(settings.VIDEO_PATH))
-    
-    if not cap.isOpened():
-        print(f"❌ ERROR: Could not open video!")
-        print(f"   Check VIDEO_PATH in .env file")
-        return
-    
-    # Get video info
-    original_fps = int(cap.get(cv2.CAP_PROP_FPS))
-    original_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    original_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    
-    # Determine output size
-    if settings.RESIZE_VIDEO:
-        output_width = settings.RESIZE_WIDTH
-        output_height = settings.RESIZE_HEIGHT
-        print(f"✅ Original: {original_width}x{original_height}, {original_fps} FPS")
-        print(f"✅ Resizing to: {output_width}x{output_height}")
-    else:
-        output_width = original_width
-        output_height = original_height
-        print(f"✅ Video: {original_width}x{original_height}, {original_fps} FPS, {total_frames} frames")
-    print()
-    
-    # Setup video writer
-    video_writer = None
-    if settings.SAVE_OUTPUT:
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        video_writer = cv2.VideoWriter(
-            str(settings.OUTPUT_VIDEO),
-            fourcc,
-            original_fps,
-            (output_width, output_height)
-        )
-        print(f"💾 Output: {settings.OUTPUT_VIDEO}")
-        print()
-    
-    # Process video
-    print("🚀 Tracking started... Press 'q' to quit")
-    print("-" * 50)
-    
-    frame_count = 0
-    
-    while True:
-        success, frame = cap.read()
-        if not success:
-            break
-        
-        frame_count += 1
-        
-        # Resize if enabled
-        if settings.RESIZE_VIDEO:
-            frame = cv2.resize(frame, (output_width, output_height))
-        
-        # Process frame (tracking only)
-        tracker_data = tracker.process_frame(frame)
-        
-        # Annotate frame (draw everything)
-        annotated_frame = visualizer.annotate_frame(frame, tracker_data)
-        
-        # Save
-        if settings.SAVE_OUTPUT and video_writer:
-            video_writer.write(annotated_frame)
-        
-        # Progress
-        progress = (frame_count / total_frames * 100) if total_frames > 0 else 0
-        print(f"Frame {frame_count}/{total_frames} ({progress:.1f}%) - "
-              f"Inside: {tracker_data['people_inside']}, "
-              f"Outside: {tracker_data['people_outside']}, "
-              f"Total: {tracker_data['total']}", end='\r')
-        
-        # Preview
-        if settings.SHOW_PREVIEW:
-            cv2.imshow('People Tracker', annotated_frame)
-            if cv2.waitKey(1) & 0xFF in (ord('q'), 27):
-                break
-    
-    print("\n" + "-" * 50)
-    
-    # Statistics
-    print()
-    print("📊 STATISTICS")
-    print("=" * 50)
-    
-    stats = tracker.get_stats()
-    if stats:
-        print(f"Total Frames: {stats['total_frames']}")
-        print(f"Average FPS: {stats['avg_fps']:.2f}")
-        print(f"Max FPS: {stats['max_fps']:.2f}")
-        print(f"Min FPS: {stats['min_fps']:.2f}")
-    
-    counts = tracker.get_counts()
-    print()
-    print("📊 PEOPLE COUNTS")
-    print("=" * 50)
-    print(f"People Inside: {counts['inside']}")
-    print(f"People Outside: {counts['outside']}")
-    print(f"Total People: {counts['total']}")
-    
-    print()
-    if settings.SAVE_OUTPUT:
-        print(f"✅ Output saved: {settings.OUTPUT_VIDEO}")
-    
-    # Cleanup
-    cap.release()
-    if video_writer:
-        video_writer.release()
-    cv2.destroyAllWindows()
-    
-    print()
-    print("🎉 Done!")
+    rt_tracker = RealtimeTracker()
+    rt_tracker.run()
 
 
 if __name__ == "__main__":

@@ -40,13 +40,8 @@ class PersonTracker:
             self.model.save(str(model_path))
             print(f"✅ Model downloaded and saved to: {model_path}")
         else:
-            # Load the model (works for both .pt and .onnx)
+            # Load the model (works for .pt, .onnx, and OpenVINO)
             self.model = YOLO(str(model_path))
-        
-        # For ONNX models, don't call .to(device)
-        # The device is handled during inference
-        if not str(model_path).endswith('.onnx'):
-            self.model.to(settings.DEVICE)
         
         # Settings
         self.conf_threshold = settings.CONF_THRESHOLD
@@ -61,9 +56,20 @@ class PersonTracker:
         # Track history for paths
         self.track_history = {}
         
+        # Determine model type for display
+        model_path_str = str(model_path)
+        if model_path_str.endswith('.pt'):
+            model_type = "PyTorch"
+        elif model_path_str.endswith('.onnx'):
+            model_type = "ONNX"
+        elif 'openvino' in model_path_str.lower() or model_path.is_dir():
+            model_type = "OpenVINO"
+        else:
+            model_type = "Unknown"
+        
         print(f"✅ Tracker ready")
         print(f"   Model: {model_path.name}")
-        print(f"   Model Type: {'ONNX' if str(model_path).endswith('.onnx') else 'PyTorch'}")
+        print(f"   Model Type: {model_type}")
         print(f"   Tracker: {settings.TRACKER_TYPE}")
         print(f"   Confidence: {settings.CONF_THRESHOLD}")
         print(f"   Device: {settings.DEVICE}")
@@ -91,11 +97,6 @@ class PersonTracker:
             'classes': [0],  # Only people
             'verbose': False
         }
-        
-        # Add device for PyTorch models, but not for ONNX
-        # For ONNX, the device is handled automatically
-        if not str(self.settings.MODEL_PATH).endswith('.onnx'):
-            track_kwargs['device'] = self.device
         
         # Add tracker if specified
         if self.tracker_type:
@@ -195,7 +196,16 @@ class PersonTracker:
         )
         
         # Show model type
-        model_type = "ONNX" if str(self.settings.MODEL_PATH).endswith('.onnx') else "PyTorch"
+        model_path_str = str(self.settings.MODEL_PATH)
+        if model_path_str.endswith('.pt'):
+            model_type = "PyTorch"
+        elif model_path_str.endswith('.onnx'):
+            model_type = "ONNX"
+        elif 'openvino' in model_path_str.lower() or self.settings.MODEL_PATH.is_dir():
+            model_type = "OpenVINO"
+        else:
+            model_type = "Unknown"
+        
         cv2.putText(
             annotated_frame,
             f"Model: {model_type}",

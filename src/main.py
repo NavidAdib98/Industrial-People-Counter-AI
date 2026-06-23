@@ -39,13 +39,9 @@ class RealtimeTracker:
         self.frame_count = 0
         self.start_time = time.time()
         self.processed_frames_for_save = []  # Store frames for saving
-        self.save_fps = 0
         
-        # Setup video writer
-        self.video_writer = None
-        self.output_width = 0
-        self.output_height = 0
-        self.original_fps = 30
+        print("✅ Realtime Tracker initialized")
+        print()
     
     def process_frame(self, frame):
         """
@@ -59,13 +55,8 @@ class RealtimeTracker:
         # Resize if enabled
         if settings.RESIZE_VIDEO:
             frame = cv2.resize(frame, (settings.RESIZE_WIDTH, settings.RESIZE_HEIGHT))
-            self.output_width = settings.RESIZE_WIDTH
-            self.output_height = settings.RESIZE_HEIGHT
-        else:
-            self.output_width = frame.shape[1]
-            self.output_height = frame.shape[0]
         
-        # Process frame (this is the slow part)
+        # Process frame (detection + tracking)
         tracker_data = self.tracker.process_frame(frame)
         
         # Annotate frame
@@ -95,11 +86,11 @@ class RealtimeTracker:
             return
         
         # Calculate actual processing FPS
-        self.save_fps = self._calculate_save_fps()
-        print(f"📊 Saving video at {self.save_fps:.1f} FPS (actual processing speed)")
+        save_fps = self._calculate_save_fps()
+        print(f"📊 Saving video at {save_fps:.1f} FPS (actual processing speed)")
         
         # Ensure FPS is reasonable (min 1, max 30)
-        save_fps = max(1, min(30, self.save_fps))
+        save_fps = max(1, min(30, save_fps))
         
         # Get dimensions from first frame
         first_frame = self.processed_frames_for_save[0]
@@ -137,10 +128,11 @@ class RealtimeTracker:
         processor.start()
         
         print("🚀 Real-time tracking started... Press 'q' to quit")
-        print("-" * 50)
+        print("-" * 60)
         
         # Display counter
         last_display_time = time.time()
+        frame_display_count = 0
         
         try:
             # Main display loop
@@ -159,15 +151,17 @@ class RealtimeTracker:
                     current_time = time.time()
                     if current_time - last_display_time >= 0.5:
                         last_display_time = current_time
+                        frame_display_count += 1
                         
-                        # Show clear status
+                        # Show clear status with all metrics
                         if tracker_data:
                             status = (f"Read: {stats['read_fps']} FPS | "
+                                     f"Target: {stats['target_fps']} FPS | "
                                      f"Process: {stats['process_fps']} FPS | "
+                                     f"Queue: {stats['queue_size']} | "
                                      f"Inside: {tracker_data['people_inside']} | "
                                      f"Outside: {tracker_data['people_outside']} | "
-                                     f"Total: {tracker_data['total']} | "
-                                     f"Queue: {stats['queue_size']}")
+                                     f"Total: {tracker_data['total']}")
                             print(status, end='\r')
                     
                     cv2.imshow('Real-Time People Tracker', annotated_frame)
@@ -177,7 +171,7 @@ class RealtimeTracker:
                 if key == ord('q') or key == 27:
                     break
                 
-                time.sleep(0.001)
+                time.sleep(0.001)  # Small sleep to prevent CPU spinning
         
         except KeyboardInterrupt:
             print("\n⚠️  Interrupted by user")
@@ -188,20 +182,22 @@ class RealtimeTracker:
             cv2.destroyAllWindows()
         
         # Show final statistics
-        print("\n" + "-" * 50)
+        print("\n" + "-" * 60)
         print()
         print("📊 FINAL STATISTICS")
-        print("=" * 50)
+        print("=" * 60)
         
         stats = self.tracker.get_stats()
         if stats:
             print(f"Total Frames Processed: {stats['total_frames']}")
             print(f"Average Process FPS: {stats['avg_fps']:.2f}")
+            print(f"Max Process FPS: {stats['max_fps']:.2f}")
+            print(f"Min Process FPS: {stats['min_fps']:.2f}")
         
         counts = self.tracker.get_counts()
         print()
         print("📊 PEOPLE COUNTS")
-        print("=" * 50)
+        print("=" * 60)
         print(f"People Inside: {counts['inside']}")
         print(f"People Outside: {counts['outside']}")
         print(f"Total People: {counts['total']}")

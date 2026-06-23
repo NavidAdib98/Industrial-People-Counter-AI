@@ -44,18 +44,20 @@ class RealtimeProcessor:
         self.width = 640
         self.height = 480
         self.total_frames = 0
+        self.frame_duration = 1.0 / 30  # Default 33ms per frame
         
-        # Statistics - using separate counters and timers
+        # FPS tracking
         self.read_count = 0
         self.process_count = 0
         self.read_fps = 0
         self.process_fps = 0
         self.last_read_time = time.time()
         self.last_process_time = time.time()
-        
-        # For FPS smoothing
         self.read_fps_history = deque(maxlen=10)
         self.process_fps_history = deque(maxlen=10)
+        
+        # For FPS limiting
+        self.last_frame_time = 0
         
         print("📹 Realtime Processor initialized")
     
@@ -64,10 +66,9 @@ class RealtimeProcessor:
         Start the real-time processing threads
         """
         if self.running:
-            print("⚠️  Already running")
             return
         
-        # Open video to get info
+        # Get video info
         cap = cv2.VideoCapture(str(self.video_path))
         if not cap.isOpened():
             print(f"❌ Cannot open video: {self.video_path}")
@@ -79,7 +80,16 @@ class RealtimeProcessor:
         self.total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         cap.release()
         
-        print(f"✅ Video info: {self.width}x{self.height}, {self.fps} FPS, {self.total_frames} frames")
+        # Calculate frame duration for FPS limiting
+        if self.fps > 0:
+            self.frame_duration = 1.0 / self.fps
+        else:
+            self.frame_duration = 1.0 / 30  # Default fallback
+            self.fps = 30
+        
+        print(f"✅ Video: {self.width}x{self.height}, {self.fps} FPS")
+        print(f"   Frame duration: {self.frame_duration * 1000:.1f}ms per frame")
+        print(f"   Total frames: {self.total_frames}")
         
         # Start threads
         self.running = True
@@ -88,42 +98,43 @@ class RealtimeProcessor:
         
         self.reader_thread.start()
         self.processor_thread.start()
-        
-        print("🚀 Threads started - Reader and Processor running")
+        print("🚀 Threads started")
     
     def stop(self):
-        """
-        Stop the real-time processing
-        """
+        """Stop the real-time processing"""
         self.running = False
         if self.reader_thread:
             self.reader_thread.join(timeout=1.0)
         if self.processor_thread:
             self.processor_thread.join(timeout=1.0)
-        print("🛑 Threads stopped")
+        print("🛑 Stopped")
     
     def _reader_loop(self):
         """
-        Reader thread - continuously reads frames from video
+        Reader thread - reads frames at the video's FPS
+        If reading is faster than video FPS, it waits
+        If reading is slower, it just continues (can't catch up)
         """
         cap = cv2.VideoCapture(str(self.video_path))
-        
         if not cap.isOpened():
-            print(f"❌ Reader: Cannot open video")
+            print("❌ Cannot open video")
             self.running = False
             return
         
-        print("📖 Reader thread started")
-        
-        # Reset FPS tracking
+        print(f"📖 Reader started (target: {self.fps} FPS, {self.frame_duration*1000:.1f}ms per frame)")
         self.read_count = 0
         self.last_read_time = time.time()
+        self.last_frame_time = time.time()
         
         while self.running:
+            # Start timing this frame
+            frame_start_time = time.time()
+            
+            # Read frame
             ret, frame = cap.read()
             
             if not ret:
-                # If video ends, loop back to start (for continuous streaming)
+                # If video ends, loop back to start
                 cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                 continue
             
@@ -143,17 +154,24 @@ class RealtimeProcessor:
                 self.read_fps_history.append(self.read_fps)
                 self.read_count = 0
                 self.last_read_time = current_time
+            
+            # ❗ FPS LIMITER: Wait if we read faster than video FPS
+            elapsed = time.time() - frame_start_time
+            sleep_time = self.frame_duration - elapsed
+            
+            if sleep_time > 0:
+                # If we read faster than video FPS, wait to match real-time
+                time.sleep(sleep_time)
+            # else: If we read slower, just continue (can't catch up)
         
         cap.release()
-        print("📖 Reader thread stopped")
+        print("📖 Reader stopped")
     
     def _processor_loop(self):
         """
         Processor thread - waits for frames and processes them
         """
-        print("⚙️  Processor thread started")
-        
-        # Reset FPS tracking
+        print("⚙️  Processor started")
         self.process_count = 0
         self.last_process_time = time.time()
         
@@ -164,7 +182,8 @@ class RealtimeProcessor:
                 if len(self.frame_queue) > 0:
                     # Get the most recent frame
                     frame = self.frame_queue.pop()
-                    self.frame_queue.clear()  # Clear old frames (only keep latest)
+                    # Clear old frames (only keep latest)
+                    self.frame_queue.clear()
             
             if frame is None:
                 time.sleep(0.001)  # Small sleep to prevent CPU spinning
@@ -186,7 +205,7 @@ class RealtimeProcessor:
                 self.process_count = 0
                 self.last_process_time = current_time
         
-        print("⚙️  Processor thread stopped")
+        print("⚙️  Processor stopped")
     
     def get_latest_frame(self):
         """
@@ -214,9 +233,9 @@ class RealtimeProcessor:
         return {
             'read_fps': int(read_fps) if read_fps > 0 else 0,
             'process_fps': int(process_fps) if process_fps > 0 else 0,
+            'target_fps': self.fps,
             'queue_size': len(self.frame_queue),
             'total_frames': self.total_frames,
             'width': self.width,
-            'height': self.height,
-            'fps': self.fps
+            'height': self.height
         }

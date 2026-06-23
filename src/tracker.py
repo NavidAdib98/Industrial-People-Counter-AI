@@ -1,8 +1,7 @@
 """
-Person Tracker Class using Ultralytics YOLO
+Person Tracker Class - Pure tracking logic only
 """
 
-import cv2
 import time
 import numpy as np
 from ultralytics import YOLO
@@ -12,6 +11,7 @@ from polygon_loader import PolygonLoader
 class PersonTracker:
     """
     Person tracker using YOLO with built-in tracking
+    Only handles detection, tracking, and counting logic
     """
     
     def __init__(self, settings):
@@ -48,15 +48,14 @@ class PersonTracker:
             if not self.polygon_loader.is_loaded():
                 self.polygon_loader = None
         
-        # Get colors
+        # Get colors (for tracking logic only)
         if self.polygon_loader:
             self.color_inside, self.color_outside = self.polygon_loader.get_colors_bgr()
             self.polygon_alpha = self.polygon_loader.alpha
             self.polygon_name = self.polygon_loader.name
         else:
-            # Default colors if no polygon
-            self.color_inside = (0, 255, 0)   # Green
-            self.color_outside = (0, 0, 255)  # Red
+            self.color_inside = (0, 255, 0)
+            self.color_outside = (0, 0, 255)
             self.polygon_alpha = 0.3
             self.polygon_name = None
         
@@ -77,20 +76,8 @@ class PersonTracker:
         self.people_inside = 0
         self.people_outside = 0
         
-        # Determine model type
-        model_path_str = str(model_path)
-        if model_path_str.endswith('.pt'):
-            model_type = "PyTorch"
-        elif model_path_str.endswith('.onnx'):
-            model_type = "ONNX"
-        elif 'openvino' in model_path_str.lower() or model_path.is_dir():
-            model_type = "OpenVINO"
-        else:
-            model_type = "Unknown"
-        
         print(f"✅ Tracker ready")
         print(f"   Model: {model_path.name}")
-        print(f"   Model Type: {model_type}")
         print(f"   Tracker: {settings.TRACKER_TYPE}")
         print(f"   Confidence: {settings.CONF_THRESHOLD}")
         print(f"   Device: {settings.DEVICE}")
@@ -107,105 +94,29 @@ class PersonTracker:
         """Check if point is inside polygon"""
         if polygon is None or len(polygon) < 3:
             return False
+        import cv2
         return cv2.pointPolygonTest(polygon, point, False) >= 0
     
-    def _draw_polygon(self, frame, polygon):
-        """Draw polygon on frame"""
-        if polygon is None or len(polygon) < 3:
-            return frame
-        
-        # Create overlay
-        overlay = frame.copy()
-        cv2.fillPoly(overlay, [polygon], self.color_inside)
-        cv2.addWeighted(overlay, self.polygon_alpha, frame, 1 - self.polygon_alpha, 0, frame)
-        
-        # Draw outline
-        cv2.polylines(frame, [polygon], True, self.color_inside, 2)
-        
-        # Draw name
-        if self.polygon_name:
-            moments = cv2.moments(polygon)
-            if moments['m00'] != 0:
-                cx = int(moments['m10'] / moments['m00'])
-                cy = int(moments['m01'] / moments['m00'])
-                cv2.putText(frame, self.polygon_name, (cx - 40, cy),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, self.color_inside, 2)
-        
-        return frame
-    
-    def _draw_info_panel(self, frame, fps):
+    def process_frame(self, frame):
         """
-        Draw transparent info panel in top-left corner with ASCII symbols
+        Process a single frame - returns detections and counts only
         
         Args:
-            frame: Input frame
-            fps: Current FPS value
+            frame: Input image
             
         Returns:
-            frame: Frame with info panel
+            dict: {
+                'detections': List of detection dicts,
+                'people_inside': int,
+                'people_outside': int,
+                'polygon_points': pixel polygon points or None,
+                'polygon_name': str or None,
+                'color_inside': tuple,
+                'color_outside': tuple,
+                'polygon_alpha': float,
+                'fps': float
+            }
         """
-        # Panel settings
-        panel_x = 10
-        panel_y = 10
-        panel_width = 170
-        panel_height = 145
-        padding = 10
-        line_spacing = 25
-        
-        # Create semi-transparent panel
-        overlay = frame.copy()
-        cv2.rectangle(overlay, 
-                     (panel_x, panel_y), 
-                     (panel_x + panel_width, panel_y + panel_height),
-                     (0, 0, 0),  # Black
-                     -1)  # Filled
-        
-        # Blend with original frame (60% opacity)
-        cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
-        
-        # Draw border
-        cv2.rectangle(frame, 
-                     (panel_x, panel_y), 
-                     (panel_x + panel_width, panel_y + panel_height),
-                     (100, 100, 100),  # Gray border
-                     1)
-        
-        # Starting position for text
-        text_x = panel_x + padding
-        text_y = panel_y + padding + 15
-        
-        # All text in white for consistency
-        color = (255, 255, 255)
-        
-        # FPS
-        cv2.putText(frame, f">> FPS: {fps:.1f}", 
-                   (text_x, text_y),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1)
-        text_y += line_spacing
-        
-        # Inside
-        cv2.putText(frame, f"[+] Inside: {self.people_inside}", 
-                   (text_x, text_y),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1)
-        text_y += line_spacing
-        
-        # Outside
-        cv2.putText(frame, f"[-] Outside: {self.people_outside}", 
-                   (text_x, text_y),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1)
-        text_y += line_spacing
-        
-        # Total
-        total = self.people_inside + self.people_outside
-        cv2.putText(frame, f"[*] Total: {total}", 
-                   (text_x, text_y),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1)
-        text_y += line_spacing
-        
-        return frame
-    
-    def process_frame(self, frame):
-        """Process a single frame"""
         self.frame_count += 1
         
         height, width = frame.shape[:2]
@@ -231,16 +142,11 @@ class PersonTracker:
         results = self.model.track(frame, **track_kwargs)
         result = results[0]
         
-        annotated_frame = frame.copy()
         detections = []
         
         # Reset counts
         self.people_inside = 0
         self.people_outside = 0
-        
-        # Draw polygon
-        if polygon is not None:
-            annotated_frame = self._draw_polygon(annotated_frame, polygon)
         
         # Process detections
         if result.boxes is not None and result.boxes.id is not None:
@@ -250,7 +156,7 @@ class PersonTracker:
             for box, track_id in zip(boxes, track_ids):
                 x1, y1, x2, y2 = map(int, box)
                 
-                # Center point (bottom center)
+                # Center point (bottom center for feet position)
                 center_x = (x1 + x2) // 2
                 bottom_y = y2
                 center_point = (center_x, bottom_y)
@@ -258,15 +164,13 @@ class PersonTracker:
                 # Check if inside
                 is_inside = self._point_in_polygon(center_point, polygon) if polygon is not None else True
                 
-                # Choose color
-                color = self.color_inside if is_inside else self.color_outside
-                
                 # Count
                 if is_inside:
                     self.people_inside += 1
                 else:
                     self.people_outside += 1
                 
+                # Store detection
                 detections.append({
                     'bbox': (x1, y1, x2, y2),
                     'track_id': int(track_id),
@@ -274,32 +178,13 @@ class PersonTracker:
                     'center': center_point
                 })
                 
-                # Draw bounding box
-                cv2.rectangle(annotated_frame, (x1, y1), (x2, y2), color, 2)
-                
-                # Draw label
-                label = f"ID:{track_id}"
-                (label_w, label_h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)
-                
-                cv2.rectangle(annotated_frame, (x1, y1 - label_h - 8), (x1 + label_w, y1), color, -1)
-                cv2.putText(annotated_frame, label, (x1, y1 - 4),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
-                
-                # Draw center dot
-                cv2.circle(annotated_frame, center_point, 4, color, -1)
-                
-                # Track path
+                # Update track history
                 if track_id not in self.track_history:
                     self.track_history[track_id] = []
                 
                 self.track_history[track_id].append(center_point)
                 if len(self.track_history[track_id]) > 30:
                     self.track_history[track_id].pop(0)
-                
-                points = self.track_history[track_id]
-                if len(points) > 1:
-                    for i in range(1, len(points)):
-                        cv2.line(annotated_frame, points[i-1], points[i], color, 2)
         
         # Calculate FPS
         current_time = time.time()
@@ -308,10 +193,21 @@ class PersonTracker:
         self.fps_list.append(fps)
         avg_fps = sum(self.fps_list[-30:]) / min(len(self.fps_list), 30)
         
-        # Draw info panel
-        annotated_frame = self._draw_info_panel(annotated_frame, avg_fps)
-        
-        return annotated_frame, detections
+        # Return all data
+        return {
+            'detections': detections,
+            'people_inside': self.people_inside,
+            'people_outside': self.people_outside,
+            'total': self.people_inside + self.people_outside,
+            'polygon_points': polygon,
+            'polygon_name': self.polygon_name,
+            'color_inside': self.color_inside,
+            'color_outside': self.color_outside,
+            'polygon_alpha': self.polygon_alpha,
+            'fps': avg_fps,
+            'track_history': self.track_history,
+            'frame_count': self.frame_count
+        }
     
     def get_stats(self):
         """Get performance statistics"""

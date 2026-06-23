@@ -3,7 +3,8 @@ Main script - runs the person tracker on a video
 """
 
 import cv2
-from person_tracker import PersonTracker
+from tracker import PersonTracker
+from visualizer import Visualizer
 from settings import settings
 
 
@@ -17,8 +18,9 @@ def main():
     # Show settings
     settings.print_settings()
     
-    # Initialize tracker
+    # Initialize tracker and visualizer
     tracker = PersonTracker(settings)
+    visualizer = Visualizer()
     
     # Open video
     print(f"📹 Opening: {settings.VIDEO_PATH}")
@@ -77,19 +79,22 @@ def main():
         if settings.RESIZE_VIDEO:
             frame = cv2.resize(frame, (output_width, output_height))
         
-        # Process frame
-        annotated_frame, detections = tracker.process_frame(frame)
+        # Process frame (tracking only)
+        tracker_data = tracker.process_frame(frame)
+        
+        # Annotate frame (draw everything)
+        annotated_frame = visualizer.annotate_frame(frame, tracker_data)
         
         # Save
         if settings.SAVE_OUTPUT and video_writer:
             video_writer.write(annotated_frame)
         
         # Progress
-        counts = tracker.get_counts()
         progress = (frame_count / total_frames * 100) if total_frames > 0 else 0
         print(f"Frame {frame_count}/{total_frames} ({progress:.1f}%) - "
-              f"Inside: {counts['inside']}, Outside: {counts['outside']}, "
-              f"Total: {counts['total']}", end='\r')
+              f"Inside: {tracker_data['people_inside']}, "
+              f"Outside: {tracker_data['people_outside']}, "
+              f"Total: {tracker_data['total']}", end='\r')
         
         # Preview
         if settings.SHOW_PREVIEW:

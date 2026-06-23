@@ -133,6 +133,77 @@ class PersonTracker:
         
         return frame
     
+    def _draw_info_panel(self, frame, fps):
+        """
+        Draw transparent info panel in top-left corner with ASCII symbols
+        
+        Args:
+            frame: Input frame
+            fps: Current FPS value
+            
+        Returns:
+            frame: Frame with info panel
+        """
+        # Panel settings
+        panel_x = 10
+        panel_y = 10
+        panel_width = 170
+        panel_height = 145
+        padding = 10
+        line_spacing = 25
+        
+        # Create semi-transparent panel
+        overlay = frame.copy()
+        cv2.rectangle(overlay, 
+                     (panel_x, panel_y), 
+                     (panel_x + panel_width, panel_y + panel_height),
+                     (0, 0, 0),  # Black
+                     -1)  # Filled
+        
+        # Blend with original frame (60% opacity)
+        cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
+        
+        # Draw border
+        cv2.rectangle(frame, 
+                     (panel_x, panel_y), 
+                     (panel_x + panel_width, panel_y + panel_height),
+                     (100, 100, 100),  # Gray border
+                     1)
+        
+        # Starting position for text
+        text_x = panel_x + padding
+        text_y = panel_y + padding + 15
+        
+        # All text in white for consistency
+        color = (255, 255, 255)
+        
+        # FPS
+        cv2.putText(frame, f">> FPS: {fps:.1f}", 
+                   (text_x, text_y),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1)
+        text_y += line_spacing
+        
+        # Inside
+        cv2.putText(frame, f"[+] Inside: {self.people_inside}", 
+                   (text_x, text_y),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1)
+        text_y += line_spacing
+        
+        # Outside
+        cv2.putText(frame, f"[-] Outside: {self.people_outside}", 
+                   (text_x, text_y),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1)
+        text_y += line_spacing
+        
+        # Total
+        total = self.people_inside + self.people_outside
+        cv2.putText(frame, f"[*] Total: {total}", 
+                   (text_x, text_y),
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1)
+        text_y += line_spacing
+        
+        return frame
+    
     def process_frame(self, frame):
         """Process a single frame"""
         self.frame_count += 1
@@ -230,36 +301,15 @@ class PersonTracker:
                     for i in range(1, len(points)):
                         cv2.line(annotated_frame, points[i-1], points[i], color, 2)
         
-        # FPS
+        # Calculate FPS
         current_time = time.time()
         fps = 1.0 / (current_time - self.last_time) if self.last_time else 0
         self.last_time = current_time
         self.fps_list.append(fps)
         avg_fps = sum(self.fps_list[-30:]) / min(len(self.fps_list), 30)
         
-        # Draw stats
-        y = 30
-        cv2.putText(annotated_frame, f"FPS: {avg_fps:.1f}", (10, y),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        y += 30
-        
-        total = self.people_inside + self.people_outside
-        cv2.putText(annotated_frame, f"Total: {total}", (10, y),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-        y += 30
-        
-        cv2.putText(annotated_frame, f"Inside: {self.people_inside}", (10, y),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, self.color_inside, 2)
-        y += 30
-        
-        cv2.putText(annotated_frame, f"Outside: {self.people_outside}", (10, y),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, self.color_outside, 2)
-        y += 30
-        
-        # Show polygon name
-        if self.polygon_name:
-            cv2.putText(annotated_frame, f"Zone: {self.polygon_name}", (10, y),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, self.color_inside, 1)
+        # Draw info panel
+        annotated_frame = self._draw_info_panel(annotated_frame, avg_fps)
         
         return annotated_frame, detections
     

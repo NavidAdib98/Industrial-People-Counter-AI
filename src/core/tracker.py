@@ -4,11 +4,16 @@ Pure tracking logic with Supervision's ByteTrack
 """
 
 import time
+import logging
 import numpy as np
 from ultralytics import YOLO
 import supervision as sv
 from utils.polygon_loader import PolygonLoader
 from core.event_logger import EventLogger
+
+
+# Configure logger for this module
+logger = logging.getLogger(__name__)
 
 
 class PersonTracker:
@@ -23,22 +28,22 @@ class PersonTracker:
         Args:
             settings: Settings object
         """
-        print("=" * 50)
-        print("👤 Initializing Person Tracker")
-        print("=" * 50)
+        logger.info("=" * 50)
+        logger.info("Initializing Person Tracker")
+        logger.info("=" * 50)
         
         self.settings = settings
         
         # Load model
         model_path = settings.MODEL_PATH
-        print(f"📦 Model: {model_path}")
+        logger.info(f"Loading model: {model_path}")
         
         if not model_path.exists():
-            print(f"⚠️  Model not found at: {model_path}")
-            print("   Downloading default model...")
+            logger.warning(f"Model not found at: {model_path}")
+            logger.info("Downloading default model...")
             self.model = YOLO("yolo11n.pt")
             self.model.save(str(model_path))
-            print(f"✅ Model downloaded and saved to: {model_path}")
+            logger.info(f"Model downloaded and saved to: {model_path}")
         else:
             self.model = YOLO(str(model_path))
         
@@ -83,33 +88,41 @@ class PersonTracker:
         self.people_outside = 0
         
         # ==================== HYSTERESIS SETTINGS ====================
-        self.hysteresis_inside_threshold = 15
-        self.hysteresis_outside_threshold = 25
+        self.hysteresis_inside_threshold = 15   # pixels inside to be considered "inside"
+        self.hysteresis_outside_threshold = 25  # pixels outside to be considered "outside"
         self.track_status_history = {}
         self.min_frames_between_changes = 10
         
         # ==================== OFFSET SETTINGS ====================
-        self.center_offset = 15
+        self.center_offset = 15  # pixels above the bottom of the box
         
-        print(f"✅ Tracker ready")
-        print(f"   Model: {model_path.name}")
-        print(f"   Tracker: ByteTrack (Supervision)")
-        print(f"   Confidence: {settings.CONF_THRESHOLD}")
-        print(f"   Device: {settings.DEVICE}")
-        print(f"   Boundary Proximity: {self.boundary_proximity_threshold}px")
-        print(f"   Hysteresis: Inside={self.hysteresis_inside_threshold}px, Outside={self.hysteresis_outside_threshold}px")
-        print(f"   Center Offset: {self.center_offset}px above bottom")
+        logger.info("Tracker ready")
+        logger.info(f"   Model: {model_path.name}")
+        logger.info(f"   Tracker: ByteTrack (Supervision)")
+        logger.info(f"   Confidence: {settings.CONF_THRESHOLD}")
+        logger.info(f"   Device: {settings.DEVICE}")
+        logger.info(f"   Boundary Proximity: {self.boundary_proximity_threshold}px")
+        logger.info(f"   Hysteresis: Inside={self.hysteresis_inside_threshold}px, Outside={self.hysteresis_outside_threshold}px")
+        logger.info(f"   Center Offset: {self.center_offset}px above bottom")
         
         if self.polygon_loader:
-            print(f"   Polygon: {self.polygon_name} ({len(self.polygon_loader.points)} points)")
+            logger.info(f"   Polygon: {self.polygon_name} ({len(self.polygon_loader.points)} points)")
         else:
-            print(f"   Polygon: None (no ROI)")
+            logger.info("   Polygon: None (no ROI)")
         
-        print("=" * 50)
-        print()
+        logger.info("=" * 50)
     
     def _point_in_polygon(self, point, polygon):
-        """Check if point is inside polygon"""
+        """
+        Check if point is inside polygon
+        
+        Args:
+            point: (x, y) tuple
+            polygon: List of polygon points (pixel coordinates)
+            
+        Returns:
+            bool: True if inside, False otherwise
+        """
         if polygon is None or len(polygon) < 3:
             return False
         import cv2
@@ -118,6 +131,15 @@ class PersonTracker:
     def _get_point_with_offset(self, x1, y1, x2, y2):
         """
         Get the reference point for inside/outside check with offset
+        
+        Uses a point slightly above the bottom of the bounding box
+        to avoid foot-boundary issues.
+        
+        Args:
+            x1, y1, x2, y2: Bounding box coordinates
+            
+        Returns:
+            tuple: (center_x, reference_y)
         """
         center_x = (x1 + x2) // 2
         bottom_y = y2
@@ -127,6 +149,9 @@ class PersonTracker:
     def _distance_to_polygon_boundary(self, point, polygon):
         """
         Calculate the distance from a point to the polygon boundary
+        
+        Returns:
+            float: Positive if inside, negative if outside
         """
         import cv2
         if polygon is None or len(polygon) < 3:
@@ -136,6 +161,13 @@ class PersonTracker:
     def _is_near_boundary(self, point, polygon):
         """
         Check if a point is near the polygon boundary
+        
+        Args:
+            point: Reference point (x, y)
+            polygon: List of polygon points
+            
+        Returns:
+            bool: True if near boundary
         """
         if polygon is None or len(polygon) < 3:
             return False
@@ -146,12 +178,25 @@ class PersonTracker:
     def _is_inside_with_hysteresis(self, track_id, point, polygon, current_frame):
         """
         Determine if a point is inside the polygon using hysteresis
+        
+        Hysteresis prevents jitter when people are on the boundary by using
+        different thresholds for entering and exiting.
+        
+        Args:
+            track_id: The track ID
+            point: Reference point (x, y)
+            polygon: List of polygon points
+            current_frame: Current frame number
+            
+        Returns:
+            bool: True if inside, False if outside
         """
         if polygon is None or len(polygon) < 3:
             return True
         
         distance = self._distance_to_polygon_boundary(point, polygon)
         
+        # Get previous status for this track
         prev_status = self.track_status_history.get(track_id, {
             'is_inside': True,
             'last_status_change': 0,
@@ -161,25 +206,31 @@ class PersonTracker:
         
         frames_since_change = current_frame - prev_status.get('last_status_change', 0)
         
+        # Prevent rapid toggling if status changed recently
         if frames_since_change < self.min_frames_between_changes:
             return prev_status.get('is_inside', True)
         
+        # Determine new status based on hysteresis
         if prev_status.get('is_inside', True):
+            # Currently inside - need to go outside_threshold to switch
             if distance > -self.hysteresis_outside_threshold:
                 new_status = True
             else:
                 new_status = False
         else:
+            # Currently outside - need to go inside_threshold to switch
             if distance < self.hysteresis_inside_threshold:
                 new_status = False
             else:
                 new_status = True
         
+        # Update history if status changed
         if new_status != prev_status.get('is_inside', True):
             prev_status['last_status_change'] = current_frame
         
         prev_status['is_inside'] = new_status
         
+        # Track consecutive frames in current state
         if new_status:
             prev_status['frames_inside'] = prev_status.get('frames_inside', 0) + 1
             prev_status['frames_outside'] = 0
@@ -187,6 +238,7 @@ class PersonTracker:
             prev_status['frames_outside'] = prev_status.get('frames_outside', 0) + 1
             prev_status['frames_inside'] = 0
         
+        # Require 3 consecutive frames to confirm status change
         if frames_since_change >= self.min_frames_between_changes:
             if new_status:
                 if prev_status.get('frames_inside', 0) < 3:
@@ -203,20 +255,21 @@ class PersonTracker:
         Process a single frame - returns detections and counts
         
         Args:
-            frame: Input image
-            video_frame_number: Actual video frame number
+            frame: Input image (numpy array)
+            video_frame_number: Actual video frame number (from VideoCapture)
             video_time: Video time in seconds
-            timestamp: System timestamp
+            timestamp: System timestamp when frame was read
             
         Returns:
             dict: {
-                'detections': sv.Detections,
+                'detections': sv.Detections object with tracker IDs,
                 'people_inside': int,
                 'people_outside': int,
+                'total': int,
                 'polygon_points': pixel polygon points or None,
                 'polygon_name': str or None,
-                'color_inside': tuple,
-                'color_outside': tuple,
+                'color_inside': tuple (BGR),
+                'color_outside': tuple (BGR),
                 'polygon_alpha': float,
                 'fps': float,
                 'frame_count': int,
@@ -228,7 +281,7 @@ class PersonTracker:
         
         height, width = frame.shape[:2]
         
-        # Get polygon points
+        # Get polygon points in pixel coordinates
         polygon = None
         if self.polygon_loader:
             polygon = self.polygon_loader.get_pixel_points(width, height)
@@ -326,7 +379,12 @@ class PersonTracker:
         }
     
     def get_stats(self):
-        """Get performance statistics"""
+        """
+        Get performance statistics
+        
+        Returns:
+            dict or None: Statistics if frames processed
+        """
         if self.fps_list:
             return {
                 'total_frames': self.frame_count,
@@ -337,7 +395,12 @@ class PersonTracker:
         return None
     
     def get_counts(self):
-        """Get people counts"""
+        """
+        Get current people counts
+        
+        Returns:
+            dict: {'inside': int, 'outside': int, 'total': int}
+        """
         return {
             'inside': self.people_inside,
             'outside': self.people_outside,
@@ -345,12 +408,18 @@ class PersonTracker:
         }
     
     def reset_track_status(self):
-        """Reset the track status history"""
+        """
+        Reset the track status history
+        
+        Useful when switching videos or re-starting processing
+        """
         self.track_status_history = {}
         self.event_logger.reset()
-        print("🔄 Track status history reset")
+        logger.info("Track status history reset")
     
     def save_events(self):
-        """Save events to files"""
+        """
+        Save events to files (JSON and CSV)
+        """
         self.event_logger.save()
         self.event_logger.print_summary()

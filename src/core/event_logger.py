@@ -6,8 +6,13 @@ Logs events to CSV and JSON formats
 import csv
 import json
 import time
+import logging
 from datetime import datetime
 from pathlib import Path
+
+
+# Configure logger for this module
+logger = logging.getLogger(__name__)
 
 
 class EventLogger:
@@ -42,9 +47,9 @@ class EventLogger:
         self.json_path = self.output_dir / f"events_{timestamp}.json"
         self.csv_path = self.output_dir / f"events_{timestamp}.csv"
         
-        print(f"📝 Event Logger initialized")
-        print(f"   JSON: {self.json_path}")
-        print(f"   CSV: {self.csv_path}")
+        logger.info(f"Event Logger initialized")
+        logger.info(f"   JSON: {self.json_path}")
+        logger.info(f"   CSV: {self.csv_path}")
     
     def log_event(self, track_id, event_type, frame_id, confidence=1.0, 
                   video_time=None, timestamp=None):
@@ -134,11 +139,21 @@ class EventLogger:
         return False
     
     def get_current_occupancy(self):
-        """Get current occupancy count"""
+        """
+        Get current occupancy count
+        
+        Returns:
+            int: Current occupancy
+        """
         return self.current_occupancy
     
     def get_events(self):
-        """Get all events"""
+        """
+        Get all events
+        
+        Returns:
+            list: List of event dictionaries
+        """
         return self.events
     
     def save(self, format='both'):
@@ -154,7 +169,7 @@ class EventLogger:
         if format in ['csv', 'both']:
             self._save_csv()
         
-        print(f"✅ Events saved: {len(self.events)} events")
+        logger.info(f"Events saved: {len(self.events)} events")
     
     def _save_json(self):
         """Save events to JSON file"""
@@ -180,29 +195,33 @@ class EventLogger:
             writer.writerows(self.events)
     
     def reset(self):
-        """Reset logger (for new video)"""
+        """
+        Reset logger (for new video)
+        """
         self.events = []
         self.event_id = 0
         self.track_last_state = {}
         self.track_last_near_boundary = {}
         self.current_occupancy = 0
-        print("🔄 Event logger reset")
+        logger.info("Event logger reset")
     
     def print_summary(self):
-        """Print summary of events"""
+        """
+        Print summary of events
+        """
         if not self.events:
-            print("📊 No events logged")
+            logger.info("No events logged")
             return
         
         enters = sum(1 for e in self.events if e['event_type'] == 'ENTER')
         exits = sum(1 for e in self.events if e['event_type'] == 'EXIT')
         
-        print("=" * 50)
-        print("📊 EVENT SUMMARY")
-        print("=" * 50)
-        print(f"Total Events: {len(self.events)}")
-        print(f"  ENTER: {enters}")
-        print(f"  EXIT: {exits}")
-        print(f"Current Occupancy: {self.current_occupancy}")
-        print(f"Unique Tracks: {len(set(e['track_id'] for e in self.events))}")
-        print("=" * 50)
+        logger.info("=" * 50)
+        logger.info("EVENT SUMMARY")
+        logger.info("=" * 50)
+        logger.info(f"Total Events: {len(self.events)}")
+        logger.info(f"  ENTER: {enters}")
+        logger.info(f"  EXIT: {exits}")
+        logger.info(f"Current Occupancy: {self.current_occupancy}")
+        logger.info(f"Unique Tracks: {len(set(e['track_id'] for e in self.events))}")
+        logger.info("=" * 50)

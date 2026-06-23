@@ -4,8 +4,11 @@ Handles loading, parsing, and color conversion
 """
 
 import json
+import logging
 import numpy as np
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 class PolygonLoader:
@@ -47,10 +50,10 @@ class PolygonLoader:
         self.polygon_file = Path(polygon_file)
         
         if not self.polygon_file.exists():
-            print(f"⚠️  Polygon file not found: {self.polygon_file}")
+            logger.warning(f"Polygon file not found: {self.polygon_file}")
             return False
         
-        print(f"📐 Loading polygon from: {self.polygon_file}")
+        logger.info(f"Loading polygon from: {self.polygon_file}")
         
         try:
             with open(self.polygon_file, 'r') as f:
@@ -58,11 +61,11 @@ class PolygonLoader:
             
             # Validate GeoJSON structure
             if data.get('type') != 'FeatureCollection':
-                print(f"⚠️  Invalid GeoJSON: expected FeatureCollection")
+                logger.error(f"Invalid GeoJSON: expected FeatureCollection")
                 return False
             
             if not data.get('features') or len(data['features']) == 0:
-                print(f"⚠️  Invalid GeoJSON: no features found")
+                logger.error(f"Invalid GeoJSON: no features found")
                 return False
             
             # Get first feature
@@ -70,13 +73,13 @@ class PolygonLoader:
             
             # Validate geometry
             if feature.get('geometry', {}).get('type') != 'Polygon':
-                print(f"⚠️  Invalid GeoJSON: expected Polygon geometry")
+                logger.error(f"Invalid GeoJSON: expected Polygon geometry")
                 return False
             
             # Extract coordinates
             coordinates = feature['geometry']['coordinates']
             if not coordinates or len(coordinates) == 0:
-                print(f"⚠️  Invalid GeoJSON: no coordinates found")
+                logger.error(f"Invalid GeoJSON: no coordinates found")
                 return False
             
             # Get the first ring (exterior polygon)
@@ -87,7 +90,7 @@ class PolygonLoader:
             
             # Validate minimum points
             if len(self.points) < 3:
-                print(f"⚠️  Invalid polygon: need at least 3 points, got {len(self.points)}")
+                logger.error(f"Invalid polygon: need at least 3 points, got {len(self.points)}")
                 return False
             
             # Get properties
@@ -109,17 +112,17 @@ class PolygonLoader:
             # Get alpha
             self.alpha = properties.get('alpha', 0.3)
             
-            print(f"✅ Loaded polygon: {self.name} ({len(self.points)} points)")
-            print(f"   Inside Color (RGB): {self.color_inside_rgb}")
-            print(f"   Outside Color (RGB): {self.color_outside_rgb}")
+            logger.info(f"Loaded polygon: {self.name} ({len(self.points)} points)")
+            logger.info(f"   Inside Color (RGB): {self.color_inside_rgb}")
+            logger.info(f"   Outside Color (RGB): {self.color_outside_rgb}")
             
             return True
             
         except json.JSONDecodeError as e:
-            print(f"❌ Error parsing GeoJSON: {e}")
+            logger.error(f"Error parsing GeoJSON: {e}")
             return False
         except Exception as e:
-            print(f"❌ Error loading polygon: {e}")
+            logger.error(f"Error loading polygon: {e}")
             return False
     
     def get_pixel_points(self, frame_width, frame_height):
@@ -163,30 +166,40 @@ class PolygonLoader:
         return self.color_inside_rgb, self.color_outside_rgb
     
     def is_loaded(self):
-        """Check if polygon is loaded"""
+        """
+        Check if polygon is loaded
+        
+        Returns:
+            bool: True if polygon is loaded and valid
+        """
         return self.points is not None and len(self.points) >= 3
     
     def print_info(self):
-        """Print polygon info"""
+        """
+        Print polygon info to logger
+        """
         if not self.is_loaded():
-            print("No polygon loaded")
+            logger.info("No polygon loaded")
             return
         
-        print("=" * 50)
-        print("📐 POLYGON INFO")
-        print("=" * 50)
-        print(f"Name: {self.name}")
-        print(f"Description: {self.description}")
-        print(f"Points: {len(self.points)}")
-        print(f"File: {self.polygon_file}")
-        print(f"Inside Color (RGB): {self.color_inside_rgb}")
-        print(f"Outside Color (RGB): {self.color_outside_rgb}")
-        print(f"Alpha: {self.alpha}")
-        print("=" * 50)
+        logger.info("=" * 50)
+        logger.info("POLYGON INFO")
+        logger.info("=" * 50)
+        logger.info(f"Name: {self.name}")
+        logger.info(f"Description: {self.description}")
+        logger.info(f"Points: {len(self.points)}")
+        logger.info(f"File: {self.polygon_file}")
+        logger.info(f"Inside Color (RGB): {self.color_inside_rgb}")
+        logger.info(f"Outside Color (RGB): {self.color_outside_rgb}")
+        logger.info(f"Alpha: {self.alpha}")
+        logger.info("=" * 50)
 
 
 # Example usage
 if __name__ == "__main__":
+    # Configure logging for example
+    logging.basicConfig(level=logging.INFO)
+    
     # Test loading
     loader = PolygonLoader("polygons/default_polygon.geojson")
     loader.print_info()

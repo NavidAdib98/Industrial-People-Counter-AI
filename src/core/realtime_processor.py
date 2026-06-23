@@ -6,8 +6,11 @@ Separates frame capture from processing for real-time performance
 import cv2
 import time
 import threading
+import logging
 import numpy as np
 from collections import deque
+
+logger = logging.getLogger(__name__)
 
 
 class FrameData:
@@ -75,7 +78,7 @@ class RealtimeProcessor:
         # Callback for processing
         self.process_callback = None
         
-        print("📹 Realtime Processor initialized")
+        logger.info("Realtime Processor initialized")
     
     def start(self):
         """
@@ -87,7 +90,7 @@ class RealtimeProcessor:
         # Get video info
         cap = cv2.VideoCapture(str(self.video_path))
         if not cap.isOpened():
-            print(f"❌ Cannot open video: {self.video_path}")
+            logger.error(f"Cannot open video: {self.video_path}")
             return
         
         self.fps = int(cap.get(cv2.CAP_PROP_FPS))
@@ -107,10 +110,10 @@ class RealtimeProcessor:
             self.frame_duration = 1.0 / 30
             self.fps = 30
         
-        print(f"✅ Video: {self.width}x{self.height}, {self.fps} FPS")
-        print(f"   Frame duration: {self.frame_duration * 1000:.1f}ms per frame")
-        print(f"   Total frames: {self.total_frames}")
-        print(f"   Video duration: {self.video_duration:.1f} seconds")
+        logger.info(f"Video: {self.width}x{self.height}, {self.fps} FPS")
+        logger.info(f"   Frame duration: {self.frame_duration * 1000:.1f}ms per frame")
+        logger.info(f"   Total frames: {self.total_frames}")
+        logger.info(f"   Video duration: {self.video_duration:.1f} seconds")
         
         # Reset frame counter
         self.read_frame_number = 0
@@ -122,7 +125,7 @@ class RealtimeProcessor:
         
         self.reader_thread.start()
         self.processor_thread.start()
-        print("🚀 Threads started")
+        logger.info("Threads started")
     
     def stop(self):
         """Stop the real-time processing"""
@@ -131,7 +134,7 @@ class RealtimeProcessor:
             self.reader_thread.join(timeout=1.0)
         if self.processor_thread:
             self.processor_thread.join(timeout=1.0)
-        print("🛑 Stopped")
+        logger.info("Stopped")
     
     def _reader_loop(self):
         """
@@ -141,11 +144,11 @@ class RealtimeProcessor:
         """
         cap = cv2.VideoCapture(str(self.video_path))
         if not cap.isOpened():
-            print("❌ Cannot open video")
+            logger.error("Cannot open video")
             self.running = False
             return
         
-        print(f"📖 Reader started (target: {self.fps} FPS, {self.frame_duration*1000:.1f}ms per frame)")
+        logger.info(f"Reader started (target: {self.fps} FPS)")
         self.read_count = 0
         self.last_read_time = time.time()
         self.last_frame_time = time.time()
@@ -198,7 +201,7 @@ class RealtimeProcessor:
                 self.read_count = 0
                 self.last_read_time = current_time
             
-            # ❗ FPS LIMITER: Wait if we read faster than video FPS
+            # FPS LIMITER: Wait if we read faster than video FPS
             elapsed = time.time() - frame_start_time
             sleep_time = self.frame_duration - elapsed
             
@@ -206,13 +209,13 @@ class RealtimeProcessor:
                 time.sleep(sleep_time)
         
         cap.release()
-        print("📖 Reader stopped")
+        logger.info("Reader stopped")
     
     def _processor_loop(self):
         """
         Processor thread - waits for frames and processes them
         """
-        print("⚙️  Processor started")
+        logger.info("Processor started")
         self.process_count = 0
         self.last_process_time = time.time()
         
@@ -233,7 +236,7 @@ class RealtimeProcessor:
                 try:
                     self.process_callback(frame_data)
                 except Exception as e:
-                    print(f"❌ Processor error: {e}")
+                    logger.error(f"Processor error: {e}")
             
             # Update process FPS
             self.process_count += 1
@@ -244,7 +247,7 @@ class RealtimeProcessor:
                 self.process_count = 0
                 self.last_process_time = current_time
         
-        print("⚙️  Processor stopped")
+        logger.info("Processor stopped")
     
     def get_latest_frame_data(self):
         """

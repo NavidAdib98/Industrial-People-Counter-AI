@@ -5,6 +5,9 @@ Uses OpenCV directly for maximum compatibility
 
 import cv2
 import numpy as np
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class Visualizer:
@@ -13,12 +16,14 @@ class Visualizer:
     """
     
     def __init__(self):
-        """Initialize visualizer"""
-        # Define colors
-        self.COLOR_INSIDE = (0, 255, 0)        # Green - inside
-        self.COLOR_OUTSIDE = (0, 0, 255)      # Red - outside
+        """Initialize visualizer with color definitions"""
+        # Define colors (BGR format for OpenCV)
+        self.COLOR_INSIDE = (0, 255, 0)        # Green - inside polygon
+        self.COLOR_OUTSIDE = (0, 0, 255)      # Red - outside polygon
         self.COLOR_BOUNDARY = (0, 255, 255)   # Yellow - near boundary
         self.TEXT_COLOR = (255, 255, 255)     # White for text
+        
+        logger.debug("Visualizer initialized")
     
     def draw_polygon(self, frame, polygon_points, color, alpha=0.3, name=None):
         """
@@ -61,10 +66,10 @@ class Visualizer:
     def draw_detections(self, frame, detections, color_inside, color_outside):
         """
         Draw bounding boxes, IDs, and center dots for detections
-        با رنگ‌های مختلف بر اساس وضعیت:
-        - سبز: داخل ناحیه
-        - قرمز: خارج ناحیه
-        - زرد: نزدیک به مرز Polygon
+        Color coding:
+        - Green: Inside polygon
+        - Red: Outside polygon
+        - Yellow: Near polygon boundary
         """
         if len(detections) == 0:
             return frame
@@ -74,26 +79,26 @@ class Visualizer:
         has_boundary_info = hasattr(detections, 'is_near_boundary')
         
         for i in range(len(detections)):
-            # Get bbox
+            # Get bbox coordinates
             x1, y1, x2, y2 = map(int, detections.xyxy[i])
             
             # Get track ID
             track_id = detections.tracker_id[i] if detections.tracker_id is not None else i
             
-            # ==================== تعیین رنگ بر اساس وضعیت ====================
-            # اولویت: نزدیک به مرز > داخل/خارج
+            # ==================== Determine color based on status ====================
+            # Priority: Near boundary > Inside/Outside
             
-            # بررسی نزدیکی به مرز
+            # Check near boundary status
             is_near_boundary = False
             if has_boundary_info and i < len(detections.is_near_boundary):
                 is_near_boundary = detections.is_near_boundary[i]
             
-            # تعیین رنگ نهایی
+            # Determine final color
             if is_near_boundary:
-                color = self.COLOR_BOUNDARY  # زرد - نزدیک به مرز
+                color = self.COLOR_BOUNDARY  # Yellow - near boundary
                 status_label = "BND"
             else:
-                # بررسی داخل/خارج بودن
+                # Check inside/outside status
                 if has_inside_info and i < len(detections.is_inside):
                     is_inside = detections.is_inside[i]
                     color = color_inside if is_inside else color_outside
@@ -105,7 +110,7 @@ class Visualizer:
             # Draw bounding box
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
             
-            # Draw label با وضعیت
+            # Draw label with status
             label = f"ID:{track_id} {status_label}"
             (label_w, label_h), _ = cv2.getTextSize(
                 label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2
@@ -123,7 +128,7 @@ class Visualizer:
             bottom_y = y2
             cv2.circle(frame, (center_x, bottom_y), 4, color, -1)
             
-            # اگر نزدیک به مرز است، یک حلقه زرد دور نقطه بکش
+            # If near boundary, draw a yellow ring around the dot
             if is_near_boundary:
                 cv2.circle(frame, (center_x, bottom_y), 8, self.COLOR_BOUNDARY, 1)
         
@@ -181,13 +186,13 @@ class Visualizer:
                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1)
         text_y += line_spacing
         
-        # Inside (سبز)
+        # Inside (Green)
         cv2.putText(frame, f"[+] Inside: {people_inside}", 
                    (text_x, text_y),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, self.COLOR_INSIDE, 1)
         text_y += line_spacing
         
-        # Outside (قرمز)
+        # Outside (Red)
         cv2.putText(frame, f"[-] Outside: {people_outside}", 
                    (text_x, text_y),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, self.COLOR_OUTSIDE, 1)
@@ -233,19 +238,19 @@ class Visualizer:
         text_x = legend_x + padding
         text_y = legend_y + padding + 15
         
-        # سبز - داخل
+        # Green - Inside
         cv2.rectangle(frame, (text_x, text_y - 12), (text_x + 15, text_y + 2), self.COLOR_INSIDE, -1)
         cv2.putText(frame, "Inside", (text_x + 20, text_y), 
                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
         text_y += line_spacing
         
-        # قرمز - خارج
+        # Red - Outside
         cv2.rectangle(frame, (text_x, text_y - 12), (text_x + 15, text_y + 2), self.COLOR_OUTSIDE, -1)
         cv2.putText(frame, "Outside", (text_x + 20, text_y), 
                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
         text_y += line_spacing
         
-        # زرد - نزدیک به مرز
+        # Yellow - Near Boundary
         cv2.rectangle(frame, (text_x, text_y - 12), (text_x + 15, text_y + 2), self.COLOR_BOUNDARY, -1)
         cv2.putText(frame, "Near Boundary", (text_x + 20, text_y), 
                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)

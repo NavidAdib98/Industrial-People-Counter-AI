@@ -8,6 +8,7 @@ import numpy as np
 from ultralytics import YOLO
 import supervision as sv
 from utils.polygon_loader import PolygonLoader
+from core.event_logger import EventLogger
 
 
 class PersonTracker:
@@ -62,6 +63,12 @@ class PersonTracker:
             self.polygon_alpha = 0.3
             self.polygon_name = None
         
+        # ==================== EVENT LOGGER ====================
+        self.event_logger = EventLogger()
+        
+        # ==================== BOUNDARY PROXIMITY SETTINGS ====================
+        self.boundary_proximity_threshold = 40  # pixels
+        
         # Settings
         self.conf_threshold = settings.CONF_THRESHOLD
         self.device = settings.DEVICE
@@ -76,28 +83,20 @@ class PersonTracker:
         self.people_outside = 0
         
         # ==================== HYSTERESIS SETTINGS ====================
-        # Hysteresis thresholds for inside/outside detection
-        # Prevents jitter when people are on the boundary
-        self.hysteresis_inside_threshold = 15   # pixels inside to be considered "inside"
-        self.hysteresis_outside_threshold = 25  # pixels outside to be considered "outside"
-        
-        # Track previous status for each track ID (for hysteresis)
-        # Format: {track_id: {'is_inside': bool, 'last_status_change': frame_count}}
+        self.hysteresis_inside_threshold = 15
+        self.hysteresis_outside_threshold = 25
         self.track_status_history = {}
-        
-        # Minimum frames between status changes (to prevent rapid toggling)
         self.min_frames_between_changes = 10
         
         # ==================== OFFSET SETTINGS ====================
-        # Offset from bottom of bounding box (in pixels)
-        # Using a point slightly above the bottom helps avoid foot-boundary issues
-        self.center_offset = 15  # pixels above the bottom of the box
+        self.center_offset = 15
         
         print(f"✅ Tracker ready")
         print(f"   Model: {model_path.name}")
         print(f"   Tracker: ByteTrack (Supervision)")
         print(f"   Confidence: {settings.CONF_THRESHOLD}")
         print(f"   Device: {settings.DEVICE}")
+        print(f"   Boundary Proximity: {self.boundary_proximity_threshold}px")
         print(f"   Hysteresis: Inside={self.hysteresis_inside_threshold}px, Outside={self.hysteresis_outside_threshold}px")
         print(f"   Center Offset: {self.center_offset}px above bottom")
         
@@ -119,62 +118,40 @@ class PersonTracker:
     def _get_point_with_offset(self, x1, y1, x2, y2):
         """
         Get the reference point for inside/outside check with offset
-        
-        Instead of using the bottom center, we use a point slightly above
-        the bottom to avoid foot-boundary issues.
-        
-        Args:
-            x1, y1, x2, y2: Bounding box coordinates
-            
-        Returns:
-            tuple: (center_x, reference_y) - reference point with offset
         """
         center_x = (x1 + x2) // 2
         bottom_y = y2
-        
-        # Apply offset: move the reference point UP from the bottom
-        # This helps when people's feet are on the boundary but their body is inside
         ref_y = bottom_y - self.center_offset
-        
         return int(center_x), int(ref_y)
     
     def _distance_to_polygon_boundary(self, point, polygon):
         """
         Calculate the distance from a point to the polygon boundary
-        
-        Returns:
-            float: Positive if inside, negative if outside
         """
         import cv2
         if polygon is None or len(polygon) < 3:
             return float('inf')
-        
-        # cv2.pointPolygonTest returns:
-        #   Positive: distance from point to polygon boundary (inside)
-        #   Negative: distance from point to polygon boundary (outside)
-        #   0: point is on boundary
         return cv2.pointPolygonTest(polygon, point, True)
+    
+    def _is_near_boundary(self, point, polygon):
+        """
+        Check if a point is near the polygon boundary
+        """
+        if polygon is None or len(polygon) < 3:
+            return False
+        
+        distance = self._distance_to_polygon_boundary(point, polygon)
+        return abs(distance) < self.boundary_proximity_threshold
     
     def _is_inside_with_hysteresis(self, track_id, point, polygon, current_frame):
         """
         Determine if a point is inside the polygon using hysteresis
-        
-        Args:
-            track_id: The track ID
-            point: The reference point (x, y)
-            polygon: The polygon points
-            current_frame: Current frame number
-            
-        Returns:
-            bool: True if inside, False if outside
         """
         if polygon is None or len(polygon) < 3:
             return True
         
-        # Get distance to polygon boundary
         distance = self._distance_to_polygon_boundary(point, polygon)
         
-        # Get previous status for this track
         prev_status = self.track_status_history.get(track_id, {
             'is_inside': True,
             'last_status_change': 0,
@@ -182,38 +159,27 @@ class PersonTracker:
             'frames_outside': 0
         })
         
-        # Calculate frames since last change
         frames_since_change = current_frame - prev_status.get('last_status_change', 0)
         
-        # If we've changed status recently, prevent rapid toggling
         if frames_since_change < self.min_frames_between_changes:
             return prev_status.get('is_inside', True)
         
-        # Determine new status based on hysteresis
         if prev_status.get('is_inside', True):
-            # Currently inside - need to go outside_threshold to switch
             if distance > -self.hysteresis_outside_threshold:
-                # Still inside (or just slightly outside)
                 new_status = True
             else:
-                # Far enough outside - switch to outside
                 new_status = False
         else:
-            # Currently outside - need to go inside_threshold to switch
             if distance < self.hysteresis_inside_threshold:
-                # Still outside (or just slightly inside)
                 new_status = False
             else:
-                # Far enough inside - switch to inside
                 new_status = True
         
-        # Update history if status changed
         if new_status != prev_status.get('is_inside', True):
             prev_status['last_status_change'] = current_frame
         
         prev_status['is_inside'] = new_status
         
-        # Track frames inside/outside (for additional stability)
         if new_status:
             prev_status['frames_inside'] = prev_status.get('frames_inside', 0) + 1
             prev_status['frames_outside'] = 0
@@ -221,10 +187,7 @@ class PersonTracker:
             prev_status['frames_outside'] = prev_status.get('frames_outside', 0) + 1
             prev_status['frames_inside'] = 0
         
-        # Additional stability: require at least 3 consecutive frames to change
-        # This prevents flickering due to detection noise
         if frames_since_change >= self.min_frames_between_changes:
-            # Check if we have enough consecutive frames
             if new_status:
                 if prev_status.get('frames_inside', 0) < 3:
                     new_status = prev_status.get('is_inside', True)
@@ -232,17 +195,18 @@ class PersonTracker:
                 if prev_status.get('frames_outside', 0) < 3:
                     new_status = prev_status.get('is_inside', True)
         
-        # Update history
         self.track_status_history[track_id] = prev_status
-        
         return new_status
     
-    def process_frame(self, frame):
+    def process_frame(self, frame, video_frame_number=None, video_time=None, timestamp=None):
         """
         Process a single frame - returns detections and counts
         
         Args:
             frame: Input image
+            video_frame_number: Actual video frame number
+            video_time: Video time in seconds
+            timestamp: System timestamp
             
         Returns:
             dict: {
@@ -255,9 +219,11 @@ class PersonTracker:
                 'color_outside': tuple,
                 'polygon_alpha': float,
                 'fps': float,
-                'frame_count': int
+                'frame_count': int,
+                'video_frame_number': int
             }
         """
+        current_frame = video_frame_number if video_frame_number is not None else self.frame_count
         self.frame_count += 1
         
         height, width = frame.shape[:2]
@@ -285,10 +251,12 @@ class PersonTracker:
         if len(detections) > 0 and detections.tracker_id is not None:
             is_inside_list = []
             center_list = []
+            near_boundary_list = []
             
             for i in range(len(detections)):
                 x1, y1, x2, y2 = detections.xyxy[i]
                 track_id = int(detections.tracker_id[i])
+                confidence = float(detections.confidence[i]) if detections.confidence is not None else 1.0
                 
                 # Get reference point with OFFSET (above bottom)
                 center_x, ref_y = self._get_point_with_offset(x1, y1, x2, y2)
@@ -296,14 +264,35 @@ class PersonTracker:
                 
                 # Check if inside using HYSTERESIS
                 is_inside = self._is_inside_with_hysteresis(
-                    track_id, ref_point, polygon, self.frame_count
+                    track_id, ref_point, polygon, current_frame
                 ) if polygon is not None else True
+                
+                # Check if near boundary
+                is_near_boundary = self._is_near_boundary(ref_point, polygon) if polygon is not None else False
+                
+                # Log state change event ONLY if near boundary
+                if is_near_boundary:
+                    self.event_logger.check_and_log_state_change(
+                        track_id, is_inside, is_near_boundary, current_frame,
+                        confidence, video_time, timestamp
+                    )
+                else:
+                    # If not near boundary, just update state without logging
+                    current_state = 'inside' if is_inside else 'outside'
+                    prev_state = self.event_logger.track_last_state.get(track_id, None)
+                    if prev_state is None:
+                        self.event_logger.track_last_state[track_id] = current_state
+                        if is_inside:
+                            self.event_logger.current_occupancy += 1
+                    else:
+                        self.event_logger.track_last_state[track_id] = current_state
                 
                 # Store the reference point (bottom center for display)
                 bottom_center = (int(center_x), int(y2))
                 
                 is_inside_list.append(is_inside)
                 center_list.append(bottom_center)
+                near_boundary_list.append(is_near_boundary)
                 
                 if is_inside:
                     self.people_inside += 1
@@ -312,6 +301,7 @@ class PersonTracker:
             
             detections.is_inside = is_inside_list
             detections.centers = center_list
+            detections.is_near_boundary = near_boundary_list
         
         # Calculate FPS
         current_time = time.time()
@@ -331,7 +321,8 @@ class PersonTracker:
             'color_outside': self.color_outside,
             'polygon_alpha': self.polygon_alpha,
             'fps': avg_fps,
-            'frame_count': self.frame_count
+            'frame_count': self.frame_count,
+            'video_frame_number': current_frame
         }
     
     def get_stats(self):
@@ -354,6 +345,12 @@ class PersonTracker:
         }
     
     def reset_track_status(self):
-        """Reset the track status history (useful when changing video or polygon)"""
+        """Reset the track status history"""
         self.track_status_history = {}
+        self.event_logger.reset()
         print("🔄 Track status history reset")
+    
+    def save_events(self):
+        """Save events to files"""
+        self.event_logger.save()
+        self.event_logger.print_summary()

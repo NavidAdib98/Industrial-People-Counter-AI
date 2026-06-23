@@ -43,21 +43,32 @@ class RealtimeTracker:
         print("✅ Realtime Tracker initialized")
         print()
     
-    def process_frame(self, frame):
+    def process_frame(self, frame_data):
         """
         Process a single frame - called by the processor thread
         
         Args:
-            frame: Input frame
+            frame_data: FrameData object containing frame and metadata
         """
         self.frame_count += 1
+        
+        # Get frame and metadata
+        frame = frame_data.frame
+        video_frame_number = frame_data.frame_number
+        video_time = frame_data.video_time
+        timestamp = frame_data.timestamp
         
         # Resize if enabled
         if settings.RESIZE_VIDEO:
             frame = cv2.resize(frame, (settings.RESIZE_WIDTH, settings.RESIZE_HEIGHT))
         
-        # Process frame (detection + tracking)
-        tracker_data = self.tracker.process_frame(frame)
+        # Process frame with metadata
+        tracker_data = self.tracker.process_frame(
+            frame,
+            video_frame_number=video_frame_number,
+            video_time=video_time,
+            timestamp=timestamp
+        )
         
         # Annotate frame
         annotated_frame = self.visualizer.annotate_frame(frame, tracker_data)
@@ -208,6 +219,12 @@ class RealtimeTracker:
         # Write saved video
         if settings.SAVE_OUTPUT and self.processed_frames_for_save:
             self._write_saved_video()
+        
+        # Save events
+        print()
+        print("📝 SAVING EVENTS...")
+        print("=" * 60)
+        self.tracker.save_events()
         
         print()
         print("🎉 Done!")

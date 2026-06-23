@@ -14,7 +14,11 @@ class Visualizer:
     
     def __init__(self):
         """Initialize visualizer"""
-        pass
+        # Define colors
+        self.COLOR_INSIDE = (0, 255, 0)        # Green - inside
+        self.COLOR_OUTSIDE = (0, 0, 255)      # Red - outside
+        self.COLOR_BOUNDARY = (0, 255, 255)   # Yellow - near boundary
+        self.TEXT_COLOR = (255, 255, 255)     # White for text
     
     def draw_polygon(self, frame, polygon_points, color, alpha=0.3, name=None):
         """
@@ -57,21 +61,17 @@ class Visualizer:
     def draw_detections(self, frame, detections, color_inside, color_outside):
         """
         Draw bounding boxes, IDs, and center dots for detections
-        
-        Args:
-            frame: Input frame
-            detections: sv.Detections object
-            color_inside: BGR color for inside polygon
-            color_outside: BGR color for outside polygon
-            
-        Returns:
-            frame: Frame with detections drawn
+        با رنگ‌های مختلف بر اساس وضعیت:
+        - سبز: داخل ناحیه
+        - قرمز: خارج ناحیه
+        - زرد: نزدیک به مرز Polygon
         """
         if len(detections) == 0:
             return frame
         
         # Check if we have inside/outside info
         has_inside_info = hasattr(detections, 'is_inside')
+        has_boundary_info = hasattr(detections, 'is_near_boundary')
         
         for i in range(len(detections)):
             # Get bbox
@@ -80,19 +80,33 @@ class Visualizer:
             # Get track ID
             track_id = detections.tracker_id[i] if detections.tracker_id is not None else i
             
-            # Determine color
-            if has_inside_info and i < len(detections.is_inside):
-                is_inside = detections.is_inside[i]
-                color = color_inside if is_inside else color_outside
+            # ==================== تعیین رنگ بر اساس وضعیت ====================
+            # اولویت: نزدیک به مرز > داخل/خارج
+            
+            # بررسی نزدیکی به مرز
+            is_near_boundary = False
+            if has_boundary_info and i < len(detections.is_near_boundary):
+                is_near_boundary = detections.is_near_boundary[i]
+            
+            # تعیین رنگ نهایی
+            if is_near_boundary:
+                color = self.COLOR_BOUNDARY  # زرد - نزدیک به مرز
+                status_label = "BND"
             else:
-                color = color_inside
-                is_inside = True
+                # بررسی داخل/خارج بودن
+                if has_inside_info and i < len(detections.is_inside):
+                    is_inside = detections.is_inside[i]
+                    color = color_inside if is_inside else color_outside
+                    status_label = "IN" if is_inside else "OUT"
+                else:
+                    color = color_inside
+                    status_label = "IN"
             
             # Draw bounding box
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
             
-            # Draw label
-            label = f"ID:{track_id}"
+            # Draw label با وضعیت
+            label = f"ID:{track_id} {status_label}"
             (label_w, label_h), _ = cv2.getTextSize(
                 label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2
             )
@@ -102,12 +116,16 @@ class Visualizer:
             
             # Label text
             cv2.putText(frame, label, (x1, y1 - 4),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, self.TEXT_COLOR, 2)
             
             # Draw center dot (bottom center for feet position)
             center_x = (x1 + x2) // 2
             bottom_y = y2
             cv2.circle(frame, (center_x, bottom_y), 4, color, -1)
+            
+            # اگر نزدیک به مرز است، یک حلقه زرد دور نقطه بکش
+            if is_near_boundary:
+                cv2.circle(frame, (center_x, bottom_y), 8, self.COLOR_BOUNDARY, 1)
         
         return frame
     
@@ -163,16 +181,16 @@ class Visualizer:
                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1)
         text_y += line_spacing
         
-        # Inside
+        # Inside (سبز)
         cv2.putText(frame, f"[+] Inside: {people_inside}", 
                    (text_x, text_y),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1)
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.55, self.COLOR_INSIDE, 1)
         text_y += line_spacing
         
-        # Outside
+        # Outside (قرمز)
         cv2.putText(frame, f"[-] Outside: {people_outside}", 
                    (text_x, text_y),
-                   cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1)
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.55, self.COLOR_OUTSIDE, 1)
         text_y += line_spacing
         
         # Total
@@ -180,6 +198,57 @@ class Visualizer:
         cv2.putText(frame, f"[*] Total: {total}", 
                    (text_x, text_y),
                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1)
+        
+        return frame
+    
+    def draw_legend(self, frame):
+        """
+        Draw color legend for statuses
+        
+        Args:
+            frame: Input frame
+            
+        Returns:
+            frame: Frame with legend
+        """
+        legend_x = frame.shape[1] - 150
+        legend_y = 10
+        legend_width = 140
+        legend_height = 100
+        padding = 5
+        line_spacing = 20
+        
+        # Semi-transparent background
+        overlay = frame.copy()
+        cv2.rectangle(overlay, 
+                     (legend_x, legend_y), 
+                     (legend_x + legend_width, legend_y + legend_height),
+                     (0, 0, 0), -1)
+        cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
+        cv2.rectangle(frame, 
+                     (legend_x, legend_y), 
+                     (legend_x + legend_width, legend_y + legend_height),
+                     (100, 100, 100), 1)
+        
+        text_x = legend_x + padding
+        text_y = legend_y + padding + 15
+        
+        # سبز - داخل
+        cv2.rectangle(frame, (text_x, text_y - 12), (text_x + 15, text_y + 2), self.COLOR_INSIDE, -1)
+        cv2.putText(frame, "Inside", (text_x + 20, text_y), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+        text_y += line_spacing
+        
+        # قرمز - خارج
+        cv2.rectangle(frame, (text_x, text_y - 12), (text_x + 15, text_y + 2), self.COLOR_OUTSIDE, -1)
+        cv2.putText(frame, "Outside", (text_x + 20, text_y), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+        text_y += line_spacing
+        
+        # زرد - نزدیک به مرز
+        cv2.rectangle(frame, (text_x, text_y - 12), (text_x + 15, text_y + 2), self.COLOR_BOUNDARY, -1)
+        cv2.putText(frame, "Near Boundary", (text_x + 20, text_y), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
         
         return frame
     
@@ -204,7 +273,7 @@ class Visualizer:
                 tracker_data['polygon_name']
             )
         
-        # Draw detections
+        # Draw detections with color coding
         if len(tracker_data['detections']) > 0:
             frame = self.draw_detections(
                 frame,
@@ -220,5 +289,8 @@ class Visualizer:
             tracker_data['people_inside'],
             tracker_data['people_outside']
         )
+        
+        # Draw legend (on top)
+        frame = self.draw_legend(frame)
         
         return frame

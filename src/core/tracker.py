@@ -7,7 +7,7 @@ import time
 import numpy as np
 from ultralytics import YOLO
 import supervision as sv
-from polygon_loader import PolygonLoader
+from utils.polygon_loader import PolygonLoader
 
 
 class PersonTracker:

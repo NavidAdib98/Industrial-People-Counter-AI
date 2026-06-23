@@ -5,10 +5,10 @@ Main script - runs the person tracker in real-time
 import cv2
 import time
 import threading
-from tracker import PersonTracker
-from visualizer import Visualizer
-from settings import settings
-from realtime_processor import RealtimeProcessor
+from core.tracker import PersonTracker
+from visualization.visualizer import Visualizer
+from utils.settings import settings
+from core.realtime_processor import RealtimeProcessor
 
 
 class RealtimeTracker:

@@ -15,7 +15,7 @@ class Settings:
     def __init__(self):
         """Load settings from .env file"""
         # Get project root
-        self.project_root = Path(__file__).parent.parent
+        self.project_root = Path(__file__).parent.parent.parent  # Changed: now in utils/
         
         # Load .env file
         env_path = self.project_root / '.env'

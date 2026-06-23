@@ -75,6 +75,9 @@ class RealtimeProcessor:
         self.last_frame_time = 0
         self.read_frame_number = 0
         
+        # Video end flag
+        self.video_ended = False
+        
         # Callback for processing
         self.process_callback = None
         
@@ -115,8 +118,9 @@ class RealtimeProcessor:
         logger.info(f"   Total frames: {self.total_frames}")
         logger.info(f"   Video duration: {self.video_duration:.1f} seconds")
         
-        # Reset frame counter
+        # Reset frame counter and end flag
         self.read_frame_number = 0
+        self.video_ended = False
         
         # Start threads
         self.running = True
@@ -139,8 +143,7 @@ class RealtimeProcessor:
     def _reader_loop(self):
         """
         Reader thread - reads frames at the video's FPS
-        If reading is faster than video FPS, it waits
-        If reading is slower, it just continues (can't catch up)
+        Stops when video ends (no loop)
         """
         cap = cv2.VideoCapture(str(self.video_path))
         if not cap.isOpened():
@@ -153,6 +156,7 @@ class RealtimeProcessor:
         self.last_read_time = time.time()
         self.last_frame_time = time.time()
         self.read_frame_number = 0
+        self.video_ended = False
         
         while self.running:
             # Start timing this frame
@@ -162,10 +166,11 @@ class RealtimeProcessor:
             ret, frame = cap.read()
             
             if not ret:
-                # If video ends, loop back to start
-                cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                self.read_frame_number = 0
-                continue
+                # Video ended - stop processing
+                logger.info("Video ended - stopping reader")
+                self.video_ended = True
+                self.running = False
+                break
             
             # Increment frame counter
             self.read_frame_number += 1
@@ -294,5 +299,6 @@ class RealtimeProcessor:
             'total_frames': self.total_frames,
             'width': self.width,
             'height': self.height,
-            'video_duration': self.video_duration
+            'video_duration': self.video_duration,
+            'video_ended': self.video_ended
         }

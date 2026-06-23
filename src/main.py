@@ -157,6 +157,12 @@ class RealtimeTracker:
         try:
             # Main display loop
             while True:
+                # Check if video ended
+                stats = processor.get_stats()
+                if stats.get('video_ended', False):
+                    logger.info("Video ended - stopping")
+                    break
+                
                 # Get latest results
                 with self.result_lock:
                     annotated_frame = self.latest_annotated_frame

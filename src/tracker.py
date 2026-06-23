@@ -41,7 +41,7 @@ class PersonTracker:
         else:
             self.model = YOLO(str(model_path))
         
-        # Initialize Supervision ByteTrack (without parameters - use defaults)
+        # Initialize Supervision ByteTrack
         self.tracker = sv.ByteTrack()
         
         # Load polygon
@@ -132,7 +132,7 @@ class PersonTracker:
         # Convert to Supervision Detections
         detections = sv.Detections.from_ultralytics(results)
         
-        # Update tracker - ByteTrack will handle tracking IDs
+        # Update tracker
         if len(detections) > 0:
             detections = self.tracker.update_with_detections(detections)
         
@@ -142,7 +142,6 @@ class PersonTracker:
         
         # Add inside/outside info to detections
         if len(detections) > 0 and detections.tracker_id is not None:
-            # Create lists to store custom attributes
             is_inside_list = []
             center_list = []
             
@@ -162,7 +161,6 @@ class PersonTracker:
                 else:
                     self.people_outside += 1
             
-            # Store as attributes on the detections object
             detections.is_inside = is_inside_list
             detections.centers = center_list
         

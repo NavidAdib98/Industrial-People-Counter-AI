@@ -27,10 +27,26 @@ class PersonTracker:
         self.settings = settings
         
         # Load model
-        model_path = settings.get_model_path()
+        model_path = settings.MODEL_PATH
         print(f"📦 Model: {model_path}")
-        self.model = YOLO(model_path)
-        self.model.to(settings.DEVICE)
+        
+        # Check if model exists
+        if not model_path.exists():
+            print(f"⚠️  Model not found at: {model_path}")
+            print("   Downloading default model...")
+            # Download the model to the models directory
+            self.model = YOLO("yolo11n.pt")
+            # Save it to the models directory
+            self.model.save(str(model_path))
+            print(f"✅ Model downloaded and saved to: {model_path}")
+        else:
+            # Load the model (works for both .pt and .onnx)
+            self.model = YOLO(str(model_path))
+        
+        # For ONNX models, don't call .to(device)
+        # The device is handled during inference
+        if not str(model_path).endswith('.onnx'):
+            self.model.to(settings.DEVICE)
         
         # Settings
         self.conf_threshold = settings.CONF_THRESHOLD
@@ -46,6 +62,8 @@ class PersonTracker:
         self.track_history = {}
         
         print(f"✅ Tracker ready")
+        print(f"   Model: {model_path.name}")
+        print(f"   Model Type: {'ONNX' if str(model_path).endswith('.onnx') else 'PyTorch'}")
         print(f"   Tracker: {settings.TRACKER_TYPE}")
         print(f"   Confidence: {settings.CONF_THRESHOLD}")
         print(f"   Device: {settings.DEVICE}")
@@ -65,16 +83,26 @@ class PersonTracker:
         """
         self.frame_count += 1
         
+        # Prepare tracking arguments
+        track_kwargs = {
+            'persist': True,
+            'conf': self.conf_threshold,
+            'iou': 0.5,
+            'classes': [0],  # Only people
+            'verbose': False
+        }
+        
+        # Add device for PyTorch models, but not for ONNX
+        # For ONNX, the device is handled automatically
+        if not str(self.settings.MODEL_PATH).endswith('.onnx'):
+            track_kwargs['device'] = self.device
+        
+        # Add tracker if specified
+        if self.tracker_type:
+            track_kwargs['tracker'] = self.tracker_type
+        
         # Run YOLO tracking
-        results = self.model.track(
-            frame,
-            persist=True,
-            tracker=self.tracker_type,
-            conf=self.conf_threshold,
-            iou=0.5,
-            classes=[0],  # Only people
-            verbose=False
-        )
+        results = self.model.track(frame, **track_kwargs)
         
         result = results[0]
         annotated_frame = frame.copy()
@@ -164,6 +192,18 @@ class PersonTracker:
             0.7,
             (0, 255, 0),
             2
+        )
+        
+        # Show model type
+        model_type = "ONNX" if str(self.settings.MODEL_PATH).endswith('.onnx') else "PyTorch"
+        cv2.putText(
+            annotated_frame,
+            f"Model: {model_type}",
+            (10, 90),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (200, 200, 200),
+            1
         )
         
         return annotated_frame, detections

@@ -28,7 +28,7 @@ class Settings:
         
         # Load settings with defaults
         self.VIDEO_PATH = self._get('VIDEO_PATH', 'videos/test_video.mp4')
-        self.MODEL_NAME = self._get('MODEL_NAME', 'yolo11n.pt')
+        self.MODEL_PATH = self._get('MODEL_PATH', 'models/yolo11n.pt')
         self.CONF_THRESHOLD = self._get_float('CONF_THRESHOLD', 0.4)
         self.DEVICE = self._get('DEVICE', 'cpu')
         self.TRACKER_TYPE = self._get('TRACKER_TYPE', 'bytetrack.yaml')
@@ -37,12 +37,17 @@ class Settings:
         
         # Resolve paths
         self.VIDEO_PATH = self._resolve_path(self.VIDEO_PATH)
+        self.MODEL_PATH = self._resolve_path(self.MODEL_PATH)
         
         # Create output directory
         self.OUTPUT_DIR = self.project_root / 'outputs'
         self.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         
         self.OUTPUT_VIDEO = self.OUTPUT_DIR / 'tracked_video.mp4'
+        
+        # Create models directory if it doesn't exist
+        models_dir = self.project_root / 'models'
+        models_dir.mkdir(parents=True, exist_ok=True)
     
     def _get(self, key, default):
         """Get string value from environment"""
@@ -66,17 +71,13 @@ class Settings:
             return Path(path)
         return self.project_root / path
     
-    def get_model_path(self):
-        """Get full model path"""
-        return str(self.project_root / 'models' / self.MODEL_NAME)
-    
     def print_settings(self):
         """Print current settings"""
         print("=" * 50)
         print("📋 CURRENT SETTINGS")
         print("=" * 50)
         print(f"VIDEO_PATH: {self.VIDEO_PATH}")
-        print(f"MODEL_NAME: {self.MODEL_NAME}")
+        print(f"MODEL_PATH: {self.MODEL_PATH}")
         print(f"CONF_THRESHOLD: {self.CONF_THRESHOLD}")
         print(f"DEVICE: {self.DEVICE}")
         print(f"TRACKER_TYPE: {self.TRACKER_TYPE}")

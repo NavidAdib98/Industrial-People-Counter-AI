@@ -1,0 +1,27 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "name": "Main Zone",
+        "description": "Full frame zone covering the entire industrial area",
+        "color_inside": [0, 255, 0],
+        "color_outside": [255, 0, 0],
+        "alpha": 0.1
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [0.2068, 0.3343],
+            [1.0161, 0.3815],
+            [1.0536, 1.1685],
+            [0.2130, 1.1917],
+            [0.2068, 0.3343]
+          ]
+        ]
+      }
+    }
+  ]
+}

@@ -1,641 +1,296 @@
-# Industrial Occupancy Tracker
+# Industrial People Counter AI
 
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
-[![Ultralytics](https://img.shields.io/badge/Ultralytics-YOLOv8-purple.svg)](https://github.com/ultralytics/ultralytics)
+[![Ultralytics](https://img.shields.io/badge/Ultralytics-YOLO11-purple.svg)](https://github.com/ultralytics/ultralytics)
 [![Supervision](https://img.shields.io/badge/Supervision-ByteTrack-green.svg)](https://github.com/roboflow/supervision)
 
-> **Real-time people counting system for industrial environments with advanced occlusion handling and boundary hysteresis**
-
-## 📋 Table of Contents
-
-- [Overview](#-overview)
-- [Features](#-features)
-- [How It Works](#-how-it-works)
-- [Input & Output](#-input--output)
-- [Installation](#-installation)
-- [Configuration](#-configuration)
-- [Usage](#-usage)
-- [Tracking & Occlusion Handling](#-tracking--occlusion-handling)
-- [Project Structure](#-project-structure)
-- [Performance Metrics](#-performance-metrics)
-- [Troubleshooting](#-troubleshooting)
-- [Contributing](#-contributing)
-- [License](#-license)
+> **Real-time people counting inside a polygon ROI using YOLO detection, ByteTrack tracking, and multithreaded frame processing**
 
 ---
 
-## 📖 Overview
+## Overview
 
-Industrial Occupancy Tracker is a computer vision system designed to count people in industrial environments using YOLOv8 detection and ByteTrack tracking. The system handles challenging scenarios including:
-
-- 🚶 **Occlusion** - People partially hidden behind objects or each other
-- 🎯 **Boundary tracking** - Accurate counting when people cross ROI boundaries
-- 🔄 **Enter/Exit detection** - Tracks when people enter or leave the monitored area
-- 📊 **Real-time occupancy** - Current count in the region of interest
-
-## ✨ Features
-
-- ✅ **Real-time person detection** using YOLO11n
-- ✅ **Robust tracking** with ByteTrack algorithm
-- ✅ **Polygon-based ROI** for flexible area definition
-- ✅ **Advanced hysteresis** to prevent boundary jitter
-- ✅ **Enter/Exit event logging** in CSV and JSON formats
-- ✅ **Annotated video output** with tracking IDs and occupancy
-- ✅ **Performance monitoring** with FPS and latency metrics
-- ✅ **Configuration via .env** for easy deployment
-
-## 🧠 How It Works
-
-### High-Level Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                    Video Input (File/Stream)                │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│              Frame Preprocessing & ROI Extraction           │
-│                        (realtime)                           |
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│              Person Detection (Ultralytics)                 │
-│         Detects all people in each frame with bbox          │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│         Tracking (Supervision)                              │
-│    Tracks individuals across frames, handles occlusions     │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│      Counting Logic & Occupancy Calculation                │
-│   - Count unique tracks within polygon                     │
-│   - Handle Enter/Exit events                               │
-│   - Maintain current occupancy                             │
-└─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────┐
-│           Output Generation                                │
-│   - Annotated video with counts and IDs                    │
-│   - CSV/JSON log with timestamps, track IDs, events       │
-└─────────────────────────────────────────────────────────────┘
-```
+Industrial People Counter AI is a computer vision system that counts people inside a defined polygon region of interest (ROI) in real time. It uses YOLO11 for detection, ByteTrack for tracking across frames, and a custom multithreaded pipeline to keep the display live even when inference is slow.
 
 ---
 
-## 📂 Input & Output
+## Architecture
 
-### Input Files
-
-Place your files in these directories:
+The system uses a **producer-consumer pattern** with 3 threads:
 
 ```
-📁 industrial-occupancy-tracker/
-├── 📁 videos/
-│   └── input_video.mp4          # Your video file (required)
-├── 📁 polygons/
-│   └── zone1.json         # ROI polygon definition (required)
-├── 📁 models/
-│   └── yolo11n.pt              # YOLO model (optional - auto-downloads)
-└── 📄 .env                      # Configuration file (required)
+┌─────────────────┐     deque     ┌──────────────────┐     annotated     ┌──────────────┐
+│  Reader Thread   │───frames────▶│ Processor Thread  │─────frame───────▶│ Main Display  │
+│ (cv2.VideoCapture)│              │ (YOLO + ByteTrack)│                  │  (cv2.imshow) │
+└─────────────────┘              └──────────────────┘                  └──────────────┘
 ```
+
+- **Reader Thread** — reads frames at the video's native FPS, pushes them into a shared `deque` (max size 2)
+- **Processor Thread** — pops the *latest* frame, runs YOLO detection → ByteTrack tracking → polygon check → event logging → drawing
+- **Main Thread** — displays the annotated frame and handles keyboard input
 
 ---
 
-#### 1. Video File (`videos/input_video.mp4`)
+## Features
 
-- **Required:** Yes
-- **Format:** MP4, AVI, MOV, or any OpenCV-supported format
-- **Naming:** You can change the filename in `.env` (VIDEO_PATH)
-- **Example:** `videos/factory_footage.mp4`
-
-```env
-VIDEO_PATH=./videos/factory_footage.mp4
-```
+- **Multithreaded processing** — separates frame capture from inference so the video never stalls
+- **Pop + clear deque** — always processes the latest frame, discards backlog (low-latency display)
+- **YOLO11n detection** — fast person detection with configurable confidence threshold
+- **ByteTrack tracking** — Kalman filter + IoU matching for persistent track IDs across frames
+- **Polygon ROI** — define any region via GeoJSON with normalized coordinates
+- **3 anti-jitter techniques** — offset, hysteresis, and temporal filtering for stable boundary counting
+- **Enter/Exit event logging** — CSV + JSON output with timestamps and occupancy
+- **Annotated video output** — bounding boxes, track IDs, inside/outside status, and occupancy panel
+- **Configuration via .env** — no code changes needed for different videos, models, or polygons
 
 ---
 
-#### 2. Polygon Configuration (`polygons/roi_polygon.json`)
+## How It Works
 
-- **Required:** Yes
-- **Format:** JSON with normalized coordinates (0-1)
-- **Points:** Define the region of interest (minimum 3 points)
+### 1. RealtimeProcessor (`src/core/realtime_processor.py`)
 
-**Example:**
+Two daemon threads with thread-safe locks:
+
+| Component | Type | What it does |
+|---|---|---|
+| `_reader_loop` | `threading.Thread` | Opens `cv2.VideoCapture`, reads frames at video FPS, pushes `FrameData` into deque |
+| `_processor_loop` | `threading.Thread` | Pops latest frame from deque, calls the processing callback (YOLO + tracking) |
+| `frame_lock` | `threading.Lock()` | Protects deque push/pop/clear from race conditions |
+| `latest_frame_lock` | `threading.Lock()` | Protects the shared latest frame for the display thread |
+
+The processor uses **pop + clear** — it always grabs the most recent frame and discards older ones. This prevents latency from accumulating when the detector is slower than the video FPS.
+
+### 2. PersonTracker (`src/core/tracker.py`)
+
+Per-frame pipeline:
+
+```
+Frame → YOLO (class 0 only) → sv.Detections → ByteTrack.update_with_detections()
+                                                      ↓
+                                            For each tracked person:
+                                              1. Compute reference point (center_x, y2 - offset)
+                                              2. Check inside/outside with hysteresis
+                                              3. Log ENTER/EXIT event if near boundary
+                                                      ↓
+                                            Return: detections + counts + metadata
+```
+
+**3 anti-jitter techniques:**
+
+| Technique | What | Why |
+|---|---|---|
+| **Offset** | Reference point = `(center_x, y2 - 15px)` instead of raw bounding box center | Bounding boxes often extend below feet (shadows, partial detections); lifting the point avoids foot-boundary ambiguity |
+| **Hysteresis** | Two asymmetric thresholds: need **15px inside** to switch to "inside", **25px outside** to switch to "outside" | Creates a dead zone around the boundary so small movements don't flip the count |
+| **Temporal filtering** | Requires **3 consecutive frames** in the new state before confirming a change | Prevents single-frame glitches (motion blur, occlusion) from toggling status |
+
+Events are only logged when the person is **within 40px of the polygon boundary** — far-away state changes update internal state silently.
+
+### 3. EventLogger (`src/core/event_logger.py`)
+
+Logs ENTER/EXIT events with:
+- Track ID, frame number, video time (seconds), confidence
+- Current occupancy after the event
+- Saves to **CSV** and **JSON** files in `outputs/`
+
+### 4. Visualizer (`src/visualization/visualizer.py`)
+
+Draws on the frame:
+- **Polygon** — semi-transparent fill with outline
+- **Bounding boxes** — green (inside), red (outside), yellow (near boundary)
+- **Track ID + status label** on each box
+- **Info panel** — FPS, inside/outside/total counts
+- **Legend** — color code reference
+
+---
+
+## Tracker Comparison
+
+The code currently uses **Supervision's ByteTrack** (`sv.ByteTrack()`). Supervision also supports other trackers via the same `update_with_detections()` interface:
+
+| Tracker | Association | Re-ID | Appearance | Inference cost | Camera motion | Occlusion handling | Key params |
+|---|---|---|---|---|---|---|---|
+| **ByteTrack** (used) | IoU only | No | None | **Very low** | ❌ Fails | Good — uses low-score detections too | `track_thresh`, `match_thresh`, `track_buffer` |
+| **DeepSORT** | IoU + Re-ID cos-dist | Yes (CNN) | 128-d feature | High (+5-15ms) | ❌ Fails | Moderate — Re-ID helps after occlusion | `max_dist`, `nn_budget`, `max_age` |
+| **BoT-SORT** | IoU + Re-ID + GMC | Yes (CNN) | Feature + Kalman + GMC | **Highest** (+GMC + Re-ID) | ✅ Handles via Global Motion Comp | Best — GMC + Re-ID + IoU | `gmc_method`, `track_high_thresh`, `new_track_thresh` |
+| **OC-SORT** | IoU + OC | No | None | Low (no Re-ID) | ❌ Fails | Very good — virtual trajectory after occlusion | `det_thresh`, `max_age`, `min_hits` |
+| **SORT** | IoU only | No | None | **Lowest** | ❌ Fails | Poor — loses track after occlusion | `max_age`, `min_hits`, `iou_threshold` |
+
+**Key takeaways:**
+- ByteTrack = best **speed/accuracy balance** for static-camera industrial scenes
+- Switch to BoT-SORT if you have a **moving camera** (handles camera motion via GMC)
+- Re-ID adds 5-50ms per frame — not worth it for real-time people counting unless occlusions are severe
+
+---
+
+## Input Files
+
+| File | Location | Required | Auto-created |
+|---|---|---|---|
+| Video | `videos/your_video.mp4` | Yes | No |
+| Polygon GeoJSON | `polygons/zone1.geojson` | Yes | No |
+| .env | `.env` | Yes | Copy from `.env.example` |
+| YOLO model | `models/yolo11n.pt` | No | Yes (auto-download) |
+
+### Polygon Format (GeoJSON)
+
+Coordinates are **normalized** (0.0 = left/top edge, 1.0 = right/bottom edge):
+
 ```json
 {
-  "name": "Main Production Area",
-  "points": [
-    [0.2, 0.1],
-    [0.8, 0.1],
-    [0.9, 0.9],
-    [0.1, 0.9]
-  ],
-  "color_inside": [0, 255, 0],
-  "color_outside": [0, 0, 255],
-  "alpha": 0.3
+  "type": "FeatureCollection",
+  "features": [{
+    "type": "Feature",
+    "properties": {
+      "name": "Main Zone",
+      "color_inside": [0, 255, 0],
+      "color_outside": [255, 0, 0],
+      "alpha": 0.3
+    },
+    "geometry": {
+      "type": "Polygon",
+      "coordinates": [[
+        [0.2, 0.1],
+        [0.8, 0.1],
+        [0.9, 0.9],
+        [0.1, 0.9],
+        [0.2, 0.1]
+      ]]
+    }
+  }]
 }
 ```
 
-**Field explanations:**
-- `name`: Display name for the area
-- `points`: Array of [x, y] coordinates (normalized 0-1)
-  - x: 0 = left edge, 1 = right edge
-  - y: 0 = top edge, 1 = bottom edge
-- `color_inside`: BGR color for inside zone (optional)
-- `color_outside`: BGR color for outside zone (optional)
-- `alpha`: Transparency level 0-1 (optional)
-
-```env
-POLYGON_FILE=./polygons/roi_polygon.json
-```
-
----
-
-#### 3. YOLO Model (`models/yolo11n.pt`)
-
-- **Required:** No (auto-downloads if missing)
-- **Default:** yolo11n.pt (nano model - fastest)
-- **Alternatives:** yolo11s.pt, yolo11m.pt, yolo11l.pt (larger = more accurate but slower)
-
-**If you want to download manually:**
-```bash
-wget -P models/ https://github.com/ultralytics/assets/releases/download/v0.0.0/yolo11n.pt
-```
-
-```env
-MODEL_PATH=./models/yolo11n.pt
-```
-
----
-
-#### 4. Environment Configuration (`.env`)
-
-- **Required:** Yes
-- **Create from:** `.env.example`
-
-```bash
-# Create your .env file
-cp .env.example .env
-```
-
-**Minimal configuration:**
-```env
-VIDEO_PATH=./videos/input_video.mp4
-POLYGON_FILE=./polygons/roi_polygon.json
-CONF_THRESHOLD=0.45
-DEVICE=cpu
-```
-
----
-
-### Summary of Required Files
-
-| File | Location | Required | Auto-Created |
-|------|----------|----------|--------------|
-| Video | `videos/input_video.mp4` | ✅ Yes | ❌ No |
-| Polygon JSON | `polygons/roi_polygon.json` | ✅ Yes | ❌ No |
-| .env | `.env` | ✅ Yes | ⚠️ Copy from .env.example |
-| YOLO Model | `models/yolo11n.pt` | ❌ No | ✅ Yes (auto-download) |
-
----
-
-### Quick Setup Commands
-
-```bash
-# 1. Create directories
-mkdir -p models videos polygons outputs
-
-# 2. Place your video
-cp /path/to/your/video.mp4 videos/input_video.mp4
-
-# 3. Create polygon config
-cat > polygons/roi_polygon.json << 'EOF'
-{
-  "name": "My Area",
-  "points": [
-    [0.2, 0.1],
-    [0.8, 0.1],
-    [0.9, 0.9],
-    [0.1, 0.9]
-  ]
-}
-EOF
-
-# 4. Create .env from example
-cp .env.example .env
-
-# 5. Edit .env with your paths
-nano .env
-```
-
----
+Pre-built examples: `polygons/zone1.geojson`, `polygons/main_zone.geojson`, `polygons/default_polygon.geojson`
 
 ### Output Files
 
-All outputs are saved in the `outputs/` directory:
-
 ```
 outputs/
-├── annotated_video.mp4    # Video with bounding boxes, IDs, and occupancy
-├── events.csv            # Event log in CSV format
-└── events.json           # Event log in JSON format
-```
-
-#### CSV Format
-```csv
-timestamp,frame_id,track_id,event,occupancy,confidence
-2024-01-15 10:30:15.123,45,T-001,ENTER,12,0.87
-2024-01-15 10:30:16.456,60,T-003,EXIT,11,0.92
-2024-01-15 10:30:17.789,75,T-001,INSIDE,12,0.88
-```
-
-#### JSON Format
-```json
-{
-  "events": [
-    {
-      "timestamp": "2024-01-15T10:30:15.123",
-      "frame_id": 45,
-      "track_id": "T-001",
-      "event": "ENTER",
-      "occupancy": 12,
-      "confidence": 0.87
-    }
-  ],
-  "summary": {
-    "total_frames": 1500,
-    "total_entries": 23,
-    "total_exits": 21,
-    "max_occupancy": 15,
-    "avg_occupancy": 10.5
-  }
-}
+├── tracked_video.mp4      # Annotated video with bounding boxes and counts
+├── events_YYYYMMDD_HHMMSS.csv   # Event log (CSV)
+└── events_YYYYMMDD_HHMMSS.json  # Event log (JSON)
 ```
 
 ---
 
-## 🚀 Installation
+## Installation
 
 ### Prerequisites
-- Python 3.10 or higher
-- pip (Python package manager)
-- Virtual environment (recommended)
+- Python 3.10+
+- `pip`
+- OpenCV system libraries (`libgl1-mesa-glx`, `libglib2.0-0` on Linux)
 
-### Step 1: Clone the Repository
+### Step-by-step
+
 ```bash
+# 1. Clone
 git clone https://github.com/NavidAdib98/Industrial-People-Counter-AI.git
-cd industrial-occupancy-tracker
-```
+cd Industrial-People-Counter-AI
 
-### Step 2: Create Virtual Environment
-```bash
-# On Linux/MacOS
+# 2. Create and activate virtual environment
 python -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate        # Linux/MacOS
+# .venv\Scripts\activate         # Windows
 
-# On Windows
-python -m venv .venv
-.venv\Scripts\activate
-```
+# 3. Install dependencies
+pip install -r requirements.txt   # ultralytics, supervision, python-dotenv
 
-### Step 3: Install Dependencies
-```bash
-pip install -r requirements.txt
-```
-
-### Step 4: Configure Environment
-```bash
-# Copy example environment file
+# 4. Configure environment
 cp .env.example .env
+# Edit .env with your video path, polygon file, and device
 
-# Edit .env with your settings
-nano .env  # or use any text editor
-```
-
-### Step 5: Prepare Input Files
-```bash
-# Create necessary directories
-mkdir -p models videos polygons outputs
-
-# Place your files:
-# - models/yolo11n.pt (optional - will auto-download)
-# - videos/input_video.mp4 (your video)
-# - polygons/roi_polygon.json (your polygon definition)
-```
-
----
-
-## ⚙️ Configuration
-
-### Environment Variables (.env)
-
-Create a `.env` file with the following configuration:
-
-```env
-# ============================================
-# PATHS (relative to project root)
-# ============================================
-MODEL_PATH=./models/yolo11n.pt
-VIDEO_PATH=./videos/input_video.mp4
-POLYGON_FILE=./polygons/roi_polygon.json
-OUTPUT_VIDEO_PATH=./outputs/annotated_video.mp4
-EVENT_LOG_CSV_PATH=./outputs/events.csv
-EVENT_LOG_JSON_PATH=./outputs/events.json
-
-# ============================================
-# MODEL CONFIGURATION
-# ============================================
-CONF_THRESHOLD=0.45          # Detection confidence threshold (0-1)
-DEVICE=cpu                   # cpu, cuda, or mps
-
-# ============================================
-# TRACKING CONFIGURATION
-# ============================================
-TRACK_HISTORY_BUFFER_SIZE=30    # Number of frames to keep in history
-TRACK_ACTIVATION_THRESHOLD=3    # Frames before activating a new track
-TRACK_LOST_THRESHOLD=30         # Frames before considering track lost
-MINIMUM_TRACK_LENGTH=5          # Minimum frames for valid track
-
-# ============================================
-# HYSTERESIS CONFIGURATION (Boundary handling)
-# ============================================
-HYSTERESIS_INSIDE_THRESHOLD=15   # Pixels inside to be "inside"
-HYSTERESIS_OUTSIDE_THRESHOLD=25  # Pixels outside to be "outside"
-MIN_FRAMES_BETWEEN_CHANGES=10    # Min frames between status changes
-MIN_CONSECUTIVE_FRAMES=3         # Consecutive frames required
-
-# ============================================
-# BOUNDARY CONFIGURATION
-# ============================================
-BOUNDARY_PROXIMITY_THRESHOLD=40  # Pixels from boundary for event logging
-CENTER_OFFSET=15                 # Pixels above bottom of bbox
-
-# ============================================
-# EVENT LOGGING
-# ============================================
-ENABLE_EVENT_LOGGING=true
-
-# ============================================
-# PERFORMANCE
-# ============================================
-MAX_FPS=30
-BATCH_SIZE=1
-USE_OPTIMIZED_INFERENCE=true
-
-# ============================================
-# VISUALIZATION
-# ============================================
-SHOW_LABELS=true
-SHOW_TRACK_IDS=true
-SHOW_BOUNDING_BOXES=true
-SHOW_OCCUPANCY_TEXT=true
-```
-
----
-
-## 🎬 Usage
-
-### Basic Usage
-
-```bash
-# Run with default settings from .env
+# 5. Run
 python src/main.py
 ```
 
-### Run with GPU Acceleration
+---
+
+## Configuration (.env)
+
+| Variable | Default | Description |
+|---|---|---|
+| `VIDEO_PATH` | `videos/Hike_Vision.mp4` | Path to video file (or `0` for webcam) |
+| `POLYGON_FILE` | `polygons/zone1.geojson` | Path to GeoJSON polygon |
+| `MODEL_PATH` | `models/yolo11n.pt` | YOLO model file |
+| `CONF_THRESHOLD` | `0.4` | Detection confidence threshold |
+| `DEVICE` | `cpu` | `cpu`, `cuda`, or `mps` |
+| `RESIZE_VIDEO` | `false` | Resize frames before processing |
+| `SAVE_OUTPUT` | `true` | Save annotated output video |
+| `SHOW_PREVIEW` | `true` | Show live OpenCV window |
+
+---
+
+## Usage
+
 ```bash
+# Run with .env settings
+python src/main.py
+
+# With GPU
 # Set DEVICE=cuda in .env
-# Or run with:
-CUDA_VISIBLE_DEVICES=0 python src/main.py
 ```
 
-### Expected Output
-During runtime, you'll see:
-```
-==================================================
-Initializing Person Tracker
-==================================================
-Loading model: ./models/yolo11n.pt
-Tracker ready
-   Model: yolo11n.pt
-   Tracker: ByteTrack (Supervision)
-   Confidence: 0.45
-   Device: cpu
-   Boundary Proximity: 40px
-   Hysteresis: Inside=15px, Outside=25px
-   Center Offset: 15px above bottom
-   Polygon: Main Production Area (4 points)
-==================================================
+Press **`q`** or **`Esc`** to stop. The live window shows:
 
-==================================================
-Starting People Tracker Application
-==================================================
-Processing video: ./videos/input_video.mp4
-Frame 100 | Inside: 12 | Outside: 3 | Total: 15 | FPS: 28.5
-Frame 200 | Inside: 14 | Outside: 2 | Total: 16 | FPS: 29.1
-...
-==================================================
-Processing Complete!
-  Total frames: 1500
-  Average FPS: 28.7
-  Max occupancy: 18
-  Output video: ./outputs/annotated_video.mp4
-  Events saved to: ./outputs/events.csv
-==================================================
 ```
+Read: 30 FPS | Target: 30 FPS | Process: 15 FPS | Queue: 0 | Inside: 5 | Outside: 3 | Total: 8
+```
+
+After completion, the annotated video and event logs are saved to `outputs/`.
 
 ---
 
-## 🎯 Tracking & Occlusion Handling
-
-### Detection Pipeline
-
-1. **YOLO Detection**
-   - Processes each frame with YOLO
-   - Returns bounding boxes for all detected people
-   - Confidence threshold filters weak detections
-
-2. **ByteTrack Tracking**
-   - Associates detections across frames
-   - Uses Kalman filters for motion prediction
-   - Maintains track IDs for each person
-   - Handles short-term occlusions
-
-### Boundary Hysteresis Strategy
-
-The system uses a sophisticated hysteresis mechanism to prevent jitter when people are on the ROI boundary:
-
-```python
-# Key Concepts:
-# 1. OFFSET: Uses a point slightly above the bottom of the bbox
-#    (avoids foot-boundary issues)
-# 
-# 2. HYSTERESIS: Different thresholds for entering vs exiting
-#    - Inside → Outside: Must go 25px outside
-#    - Outside → Inside: Must go 15px inside
-# 
-# 3. TEMPORAL FILTERING: Requires consecutive frames to change status
-#    - Prevents rapid toggling
-#    - Requires 3 consecutive frames for confirmation
-# 
-# 4. EVENT LOGGING: Only logs events when near boundary
-#    - Reduces noise from far-away objects
-#    - Focuses on important transitions
-```
-
-### How It Prevents Boundary Jitter
+## Project Structure
 
 ```
-Traditional Approach (No Hysteresis):
-┌─────────────────────────────┐
-│  Person crosses boundary     │
-│  → Status changes every frame │
-│  → Rapid toggling (jitter)   │
-└─────────────────────────────┘
-
-Our Approach (With Hysteresis):
-┌──────────────────────────────────────────┐
-│  Person moving IN:                       │
-│  → Must be 15px inside to switch         │
-│  → Requires 3 consecutive frames         │
-│  → Smooth transition                     │
-│                                          │
-│  Person moving OUT:                      │
-│  → Must be 25px outside to switch        │
-│  → Requires 3 consecutive frames         │
-│  → Smooth transition                     │
-└──────────────────────────────────────────┘
-```
-
-### Visual Representation
-
-```
-Boundary Zone Visualization:
-
-         INSIDE ZONE
-    ┌─────────────────────┐
-    │   -15px threshold   │ ← Hysteresis Inside (15px)
-    │   ┌───────────┐    │
-    │   │  BOUNDARY │    │ ← Polygon Boundary
-    │   └───────────┘    │
-    │   +25px threshold   │ ← Hysteresis Outside (25px)
-    └─────────────────────┘
-         OUTSIDE ZONE
-
-- Blue: Inside zone (requires +15px to switch)
-- Red: Outside zone (requires -25px to switch)
-- Green: Boundary area (event logging zone, 40px)
-```
-
-### Offset Strategy
-
-```python
-# We use a point slightly above the bottom of the bounding box
-# Why? People's feet are on the ground, but bounding boxes often
-# extend below the actual foot position due to shadows or artifacts
-
-# Without offset:
-bbox_bottom = y2  # May include shadow/artifact
-
-# With offset:
-reference_point = (center_x, y2 - 15)  # 15px above bottom
-# More accurate for boundary crossing detection
-```
-
----
-
-## 📁 Project Structure
-
-```
-industrial-occupancy-tracker/
+Industrial-People-Counter-AI/
+├── .env                          # Configuration
+├── .env.example                  # Example config
+├── Dockerfile                    # Docker build (experimental)
+├── requirements.txt              # Python dependencies
+├── README.md
 │
-├── .env                           # Environment configuration
-├── .env.example                   # Example configuration
-├── .dockerignore                  # Docker ignore file
-├── .gitignore                     # Git ignore file
-├── Dockerfile                     # Docker build file
-├── requirements.txt               # Python dependencies
-├── README.md                      # This file
-│
-├── src/                           # Source code
-│   ├── __init__.py
-│   ├── main.py                    # Entry point
+├── src/
+│   ├── main.py                   # Entry point (RealtimeTracker)
 │   │
-│   ├── core/                      # Core modules
-│   │   ├── __init__.py
-│   │   ├── event_logger.py        # Event logging to CSV/JSON
-│   │   ├── realtime_processor.py  # realtime frame capture
-│   │   └── tracker.py      
-│   └── utils/                     # Utility functions
-│       ├── __init__.py
-│       ├── polygon_loader.py      # Polygon configuration loader
-│       └── settings.py      
+│   ├── core/
+│   │   ├── realtime_processor.py # Multithreaded frame reader + processor
+│   │   ├── tracker.py            # YOLO detection + ByteTrack + polygon counting
+│   │   └── event_logger.py       # ENTER/EXIT event logging (CSV/JSON)
+│   │
+│   ├── visualization/
+│   │   └── visualizer.py         # OpenCV drawing (boxes, polygon, info panel)
+│   │
+│   └── utils/
+│       ├── settings.py           # .env loader
+│       └── polygon_loader.py     # GeoJSON parser
 │
-├── models/                        # Model files (volume)
-│   └── yolo11n.pt                 # YOLO model (auto-download)
-│
-├── videos/                        # Input videos (volume)
-│   └── input_video.mp4            # Your video file
-│
-├── polygons/                      # Polygon configurations (volume)
-│   └── roi_polygon.json           # ROI polygon definition
-│
-└── outputs/                       # Output files (volume)
-    ├── annotated_video.mp4        # Annotated video
-    ├── events.csv                 # Event log (CSV)
-    └── events.json                # Event log (JSON)
+├── models/                       # YOLO model files
+├── videos/                       # Input videos
+├── polygons/                     # GeoJSON polygon files
+└── outputs/                      # Annotated video + event logs
 ```
 
 ---
 
-## 🐳 Docker (In Progress)
+## Docker
 
-> ⚠️ **Note:** Docker support is currently under development and not recommended for production use.
+A `Dockerfile` is included but **not tested for production use**. It installs OpenCV system dependencies and runs the application:
 
-The Docker setup is being prepared and will be available in future releases. Current Dockerfile is present but not yet production-ready.
+```bash
+docker build -t people-counter .
+docker run --rm \
+  -v "$(pwd)"/videos:/app/videos \
+  -v "$(pwd)"/polygons:/app/polygons \
+  -v "$(pwd)"/outputs:/app/outputs \
+  -v "$(pwd)"/.env:/app/.env \
+  people-counter
+```
 
-**Planned Docker features:**
-- GPU acceleration support
-- Volume mounting for inputs/outputs
-- Easy deployment
-- Scalable architecture
-
----
-
-## 🤝 Contributing
-
-We welcome contributions! Please follow these steps:
-
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/AmazingFeature`)
-3. Commit your changes (`git commit -m 'Add AmazingFeature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
-
-
-
-## 🙏 Acknowledgments
-
-- [Ultralytics YOLOv8](https://github.com/ultralytics/ultralytics) - Detection model
-- [Supervision](https://github.com/roboflow/supervision) - Tracking and utilities
-- [ByteTrack](https://github.com/ifzhang/ByteTrack) - Tracking algorithm
+GPU passthrough and production readiness are **not yet validated**.
 
 ---
 
-## 📚 Additional Resources
+## License
 
-- [YOLOv8 Documentation](https://docs.ultralytics.com/)
-- [Supervision Documentation](https://supervision.roboflow.com/)
-- [OpenCV Documentation](https://docs.opencv.org/)
-- [ByteTrack Paper](https://arxiv.org/abs/2110.06864)
-
----
-
-**Made with ❤️ for industrial safety and efficiency**
+MIT

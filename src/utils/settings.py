@@ -40,11 +40,20 @@ class Settings:
         
         # ==================== MODEL ====================
         self.MODEL_PATH = self._get('MODEL_PATH', 'models/yolo11n.pt')
+        
+        # ==================== DETECTION ====================
         self.CONF_THRESHOLD = self._get_float('CONF_THRESHOLD', 0.4)
+        self.IOU_THRESHOLD = self._get_float('IOU_THRESHOLD', 0.5)
+        self.MAX_DETECTIONS = self._get_int('MAX_DETECTIONS', 300)
+        self.HALF_PRECISION = self._get_bool('HALF_PRECISION', False)
         self.DEVICE = self._get('DEVICE', 'cpu')
         
         # ==================== TRACKER ====================
-        self.TRACKER_TYPE = self._get('TRACKER_TYPE', 'bytetrack.yaml')
+        self.TRACK_ACTIVATION_THRESHOLD = self._get_float('TRACK_ACTIVATION_THRESHOLD', 0.25)
+        self.MINIMUM_MATCHING_THRESHOLD = self._get_float('MINIMUM_MATCHING_THRESHOLD', 0.8)
+        self.LOST_TRACK_BUFFER = self._get_int('LOST_TRACK_BUFFER', 30)
+        self.MINIMUM_CONSECUTIVE_FRAMES = self._get_int('MINIMUM_CONSECUTIVE_FRAMES', 1)
+        self.FRAME_RATE = self._get_int('FRAME_RATE', 30)
         
         # ==================== POLYGON ====================
         self.POLYGON_FILE = self._get('POLYGON_FILE', None)
@@ -155,8 +164,10 @@ class Settings:
         print(f"VIDEO_PATH: {self.VIDEO_PATH}")
         print(f"MODEL_PATH: {self.MODEL_PATH}")
         print(f"CONF_THRESHOLD: {self.CONF_THRESHOLD}")
+        print(f"IOU_THRESHOLD: {self.IOU_THRESHOLD}")
+        print(f"MAX_DETECTIONS: {self.MAX_DETECTIONS}")
+        print(f"HALF_PRECISION: {self.HALF_PRECISION}")
         print(f"DEVICE: {self.DEVICE}")
-        print(f"TRACKER_TYPE: {self.TRACKER_TYPE}")
         print(f"RESIZE_VIDEO: {self.RESIZE_VIDEO}")
         if self.RESIZE_VIDEO:
             print(f"RESIZE: {self.RESIZE_WIDTH}x{self.RESIZE_HEIGHT}")

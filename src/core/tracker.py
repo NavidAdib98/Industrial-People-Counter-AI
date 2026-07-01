@@ -47,8 +47,14 @@ class PersonTracker:
         else:
             self.model = YOLO(str(model_path))
         
-        # Initialize Supervision ByteTrack
-        self.tracker = sv.ByteTrack()
+        # Initialize Supervision ByteTrack (configurable from .env)
+        self.tracker = sv.ByteTrack(
+            track_activation_threshold=settings.TRACK_ACTIVATION_THRESHOLD,
+            minimum_matching_threshold=settings.MINIMUM_MATCHING_THRESHOLD,
+            lost_track_buffer=settings.LOST_TRACK_BUFFER,
+            minimum_consecutive_frames=settings.MINIMUM_CONSECUTIVE_FRAMES,
+            frame_rate=settings.FRAME_RATE,
+        )
         
         # Load polygon
         self.polygon_loader = None
@@ -100,7 +106,13 @@ class PersonTracker:
         logger.info(f"   Model: {model_path.name}")
         logger.info(f"   Tracker: ByteTrack (Supervision)")
         logger.info(f"   Confidence: {settings.CONF_THRESHOLD}")
+        logger.info(f"   IoU Threshold: {settings.IOU_THRESHOLD}")
+        logger.info(f"   Max Detections: {settings.MAX_DETECTIONS}")
+        logger.info(f"   Half Precision: {settings.HALF_PRECISION}")
         logger.info(f"   Device: {settings.DEVICE}")
+        logger.info(f"   Track Activation: {settings.TRACK_ACTIVATION_THRESHOLD}")
+        logger.info(f"   Match Threshold: {settings.MINIMUM_MATCHING_THRESHOLD}")
+        logger.info(f"   Lost Track Buffer: {settings.LOST_TRACK_BUFFER} frames")
         logger.info(f"   Boundary Proximity: {self.boundary_proximity_threshold}px")
         logger.info(f"   Hysteresis: Inside={self.hysteresis_inside_threshold}px, Outside={self.hysteresis_outside_threshold}px")
         logger.info(f"   Center Offset: {self.center_offset}px above bottom")
@@ -287,7 +299,7 @@ class PersonTracker:
             polygon = self.polygon_loader.get_pixel_points(width, height)
         
         # Run YOLO detection
-        results = self.model(frame, conf=self.conf_threshold, classes=[0], verbose=False)[0]
+        results = self.model(frame, conf=self.conf_threshold, iou=self.settings.IOU_THRESHOLD, max_det=self.settings.MAX_DETECTIONS, half=self.settings.HALF_PRECISION, classes=[0], verbose=False)[0]
         
         # Convert to Supervision Detections
         detections = sv.Detections.from_ultralytics(results)
